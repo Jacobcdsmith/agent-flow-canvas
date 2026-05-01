@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -13,8 +13,11 @@ import ReactFlow, {
   applyNodeChanges,
   Connection,
   MarkerType,
+  ReactFlowProvider,
+  useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { toast } from "sonner";
 
 import { AgentNode } from "@/flow/AgentNode";
 import { Palette } from "@/flow/Palette";
@@ -22,19 +25,109 @@ import { Inspector } from "@/flow/Inspector";
 import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generatePseudocode } from "@/flow/pseudocode";
+import { validateGraph, ValidationIssue } from "@/flow/validate";
 
 const nodeTypes = { agent: AgentNode };
 
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
 
-const Index = () => {
+function Canvas() {
+  const rf = useReactFlow();
+
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(exampleNodes);
-  const [edges, setEdges] = useState<Edge[]>(
-    exampleEdges.map((e) => ({ ...e, markerEnd: { type: MarkerType.ArrowClosed } })),
-  );
+  const [edges, setEdges] = useState<Edge[]>(exampleEdges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const [issues, setIssues] = useState<ValidationIssue[]>([]);
+  const [validated, setValidated] = useState(false);
+  const addOffsetRef = useRef(0);
+
+  // ---- undo stack ----
+  const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+  const skipSnapshot = useRef(false);
+  const snapshot = useCallback(() => {
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    if (undoStack.current.length > 20) undoStack.current.shift();
+  }, [nodes, edges]);
+
+  const undo = useCallback(() => {
+    const prev = undoStack.current.pop();
+    if (!prev) {
+      toast("Nothing to undo");
+      return;
+    }
+    skipSnapshot.current = true;
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    toast("Undo");
+  }, []);
+
+  // augment nodes with issue info for rendering
+  const issueByNode = useMemo(() => {
+    const m = new Map<string, string>();
+    issues.forEach((i) => {
+      if (i.nodeId) {
+        m.set(i.nodeId, (m.get(i.nodeId) ? m.get(i.nodeId) + " · " : "") + i.message);
+      }
+    });
+    return m;
+  }, [issues]);
+
+  const renderedNodes = useMemo(
+    () =>
+      nodes.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          hasIssue: validated && issueByNode.has(n.id),
+          issueText: issueByNode.get(n.id),
+        },
+      })),
+    [nodes, issueByNode, validated],
+  );
+
+  const renderedEdges = useMemo(
+    () =>
+      edges.map((e) => {
+        const isSel = e.id === selectedEdgeId;
+        return {
+          ...e,
+          type: "smoothstep" as const,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
+          },
+          style: {
+            stroke: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
+            strokeWidth: isSel ? 2 : 1,
+            strokeDasharray: isSel ? "6 3" : "3 3",
+            opacity: isSel ? 1 : 0.7,
+          },
+          labelStyle: {
+            fontFamily: "ui-monospace, monospace",
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase" as const,
+            fill: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
+          },
+          labelBgStyle: {
+            fill: "hsl(var(--paper))",
+            stroke: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-faint))",
+            strokeWidth: 0.5,
+          },
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 0,
+          label: String(e.label ?? "next"),
+        };
+      }),
+    [edges, selectedEdgeId],
+  );
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((ns) => applyNodeChanges(changes, ns)),
@@ -45,66 +138,186 @@ const Index = () => {
     [],
   );
   const onConnect = useCallback(
-    (c: Connection) =>
-      setEdges((es) =>
-        addEdge(
-          { ...c, label: "next", type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed } },
-          es,
-        ),
-      ),
-    [],
+    (c: Connection) => {
+      snapshot();
+      setEdges((es) => addEdge({ ...c, label: "next", type: "smoothstep" }, es));
+      toast("Edge added");
+    },
+    [snapshot],
   );
 
-  const addNode = useCallback((meta: NodeTypeMeta) => {
-    const id = nextId();
-    const newNode: Node<AgentNodeData> = {
-      id,
-      type: "agent",
-      position: { x: 200 + Math.random() * 300, y: 200 + Math.random() * 300 },
-      data: {
-        kind: meta.kind,
-        name: meta.defaultName,
-        config: Object.fromEntries(meta.configFields.map((f) => [f.key, ""])),
-        isEntry: meta.isEntry,
-        isTerminal: meta.isTerminal,
-      },
+  const addNode = useCallback(
+    (meta: NodeTypeMeta) => {
+      snapshot();
+      const id = nextId();
+      const off = addOffsetRef.current;
+      addOffsetRef.current = (off + 1) % 8;
+      // place near viewport center
+      const center =
+        typeof rf.screenToFlowPosition === "function"
+          ? rf.screenToFlowPosition({
+              x: window.innerWidth / 2,
+              y: window.innerHeight / 2,
+            })
+          : { x: 400, y: 300 };
+      const newNode: Node<AgentNodeData> = {
+        id,
+        type: "agent",
+        position: { x: center.x - 120 + off * 30, y: center.y - 50 + off * 30 },
+        data: {
+          kind: meta.kind,
+          name: meta.defaultName,
+          config: Object.fromEntries(meta.configFields.map((f) => [f.key, ""])),
+          isEntry: meta.isEntry,
+          isTerminal: meta.isTerminal,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(id);
+      setSelectedEdgeId(null);
+      toast(`${meta.label} added`);
+    },
+    [rf, snapshot],
+  );
+
+  const updateNode = useCallback(
+    (id: string, patch: Partial<AgentNodeData>) => {
+      snapshot();
+      setNodes((ns) =>
+        ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
+      );
+    },
+    [snapshot],
+  );
+
+  const deleteNode = useCallback(
+    (id: string) => {
+      snapshot();
+      setNodes((ns) => ns.filter((n) => n.id !== id));
+      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
+      setSelectedId(null);
+      toast("Node deleted");
+    },
+    [snapshot],
+  );
+
+  const deleteEdge = useCallback(
+    (id: string) => {
+      snapshot();
+      setEdges((es) => es.filter((e) => e.id !== id));
+      setSelectedEdgeId(null);
+      toast("Edge deleted");
+    },
+    [snapshot],
+  );
+
+  const cycleEdgeLabel = useCallback(
+    (edgeId: string) => {
+      snapshot();
+      setEdges((es) =>
+        es.map((e) => {
+          if (e.id !== edgeId) return e;
+          const idx = EDGE_LABELS.indexOf((e.label as any) ?? "next");
+          const next = EDGE_LABELS[(idx + 1) % EDGE_LABELS.length];
+          return { ...e, label: next };
+        }),
+      );
+    },
+    [snapshot],
+  );
+
+  // keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "Escape") {
+        setSelectedId(null);
+        setSelectedEdgeId(null);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedId) deleteNode(selectedId);
+        else if (selectedEdgeId) deleteEdge(selectedEdgeId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undo();
+      }
     };
-    setNodes((ns) => [...ns, newNode]);
-    setSelectedId(id);
-  }, []);
-
-  const updateNode = useCallback((id: string, patch: Partial<AgentNodeData>) => {
-    setNodes((ns) =>
-      ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
-    );
-  }, []);
-
-  const deleteNode = useCallback((id: string) => {
-    setNodes((ns) => ns.filter((n) => n.id !== id));
-    setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
-    setSelectedId(null);
-  }, []);
-
-  const cycleEdgeLabel = useCallback((edgeId: string) => {
-    setEdges((es) =>
-      es.map((e) => {
-        if (e.id !== edgeId) return e;
-        const idx = EDGE_LABELS.indexOf((e.label as any) ?? "next");
-        const next = EDGE_LABELS[(idx + 1) % EDGE_LABELS.length];
-        return { ...e, label: next };
-      }),
-    );
-  }, []);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
     [nodes, selectedId],
   );
+  const selectedEdge = useMemo(
+    () => edges.find((e) => e.id === selectedEdgeId) ?? null,
+    [edges, selectedEdgeId],
+  );
 
   const pseudocode = useMemo(() => generatePseudocode(nodes, edges), [nodes, edges]);
 
+  // export / import
+  const exportJSON = useCallback(() => {
+    const data = JSON.stringify(
+      {
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          position: n.position,
+          data: n.data,
+        })),
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: e.label,
+        })),
+      },
+      null,
+      2,
+    );
+    navigator.clipboard.writeText(data).then(() => toast("Graph copied to clipboard"));
+  }, [nodes, edges]);
+
+  const importJSON = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsed = JSON.parse(text);
+      if (!parsed.nodes || !parsed.edges) throw new Error("invalid shape");
+      snapshot();
+      setNodes(
+        parsed.nodes.map((n: any) => ({
+          id: n.id,
+          type: "agent",
+          position: n.position ?? { x: 0, y: 0 },
+          data: n.data,
+        })),
+      );
+      setEdges(
+        parsed.edges.map((e: any) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: e.label ?? "next",
+          type: "smoothstep",
+        })),
+      );
+      toast("Graph imported");
+    } catch (err) {
+      toast.error("Invalid JSON in clipboard");
+    }
+  }, [snapshot]);
+
+  const runValidate = useCallback(() => {
+    const found = validateGraph(nodes, edges);
+    setIssues(found);
+    setValidated(true);
+    if (found.length === 0) toast.success("Graph is valid");
+    else toast.error(`${found.length} issue${found.length > 1 ? "s" : ""} found`);
+  }, [nodes, edges]);
+
   return (
-    <div className="h-screen w-screen flex flex-col bg-[hsl(var(--paper))] text-[hsl(var(--ink))]">
+    <div className="h-screen w-screen flex flex-col bg-[hsl(var(--paper))] text-[hsl(var(--ink))] overflow-hidden">
       <header className="h-12 shrink-0 flex items-center justify-between px-4 border-b border-dashed border-[hsl(var(--grid-line))]">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-[hsl(var(--ink))] relative">
@@ -114,13 +327,31 @@ const Index = () => {
             agent_flow<span className="text-[hsl(var(--ink-faint))]">.canvas</span>
           </h1>
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))] ml-2">
-            wireframe · v0.1
+            wireframe · v0.2
           </span>
         </div>
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          <button
+            onClick={runValidate}
+            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            validate
+          </button>
+          <button
+            onClick={exportJSON}
+            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            export json
+          </button>
+          <button
+            onClick={importJSON}
+            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            import json
+          </button>
           <button
             onClick={() => setShowCode((v) => !v)}
             className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
@@ -130,34 +361,47 @@ const Index = () => {
         </div>
       </header>
 
+      {validated && issues.length > 0 && (
+        <div
+          className="shrink-0 px-4 py-1.5 font-mono text-[10px] flex items-center gap-3 border-b border-dashed"
+          style={{ background: "hsl(var(--issue) / 0.08)", borderColor: "hsl(var(--issue))", color: "hsl(var(--issue))" }}
+        >
+          <span className="uppercase tracking-[0.2em] font-semibold">{issues.length} issue{issues.length > 1 ? "s" : ""}</span>
+          <span className="truncate">{issues.map((i) => i.message).join("  ·  ")}</span>
+          <button
+            onClick={() => { setIssues([]); setValidated(false); }}
+            className="ml-auto uppercase tracking-wider hover:underline"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 flex min-h-0">
         <Palette onAdd={addNode} />
 
         <main className="flex-1 relative min-w-0">
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={renderedNodes}
+            edges={renderedEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, n) => setSelectedId(n.id)}
-            onPaneClick={() => setSelectedId(null)}
-            onEdgeClick={(_, e) => cycleEdgeLabel(e.id)}
+            onNodeClick={(_, n) => {
+              setSelectedId(n.id);
+              setSelectedEdgeId(null);
+            }}
+            onPaneClick={() => {
+              setSelectedId(null);
+              setSelectedEdgeId(null);
+            }}
+            onEdgeClick={(_, e) => {
+              setSelectedEdgeId(e.id);
+              setSelectedId(null);
+            }}
             nodeTypes={nodeTypes}
             fitView
             proOptions={{ hideAttribution: true }}
-            defaultEdgeOptions={{
-              type: "smoothstep",
-              style: { stroke: "hsl(var(--ink))", strokeWidth: 1.25, strokeDasharray: "4 3" },
-              labelStyle: {
-                fontFamily: "ui-monospace, monospace",
-                fontSize: 10,
-                fill: "hsl(var(--ink))",
-              },
-              labelBgStyle: { fill: "hsl(var(--paper))" },
-              labelBgPadding: [4, 2],
-              markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--ink))" },
-            }}
             style={{ background: "hsl(var(--paper))" }}
           >
             <Background
@@ -180,11 +424,30 @@ const Index = () => {
           </ReactFlow>
 
           <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-            click edge → cycle label · drag handles → connect
+            click edge → select · drag handles → connect · del / esc / ⌘z
           </div>
+
+          {selectedEdge && (
+            <div className="absolute top-3 right-3 flex items-center gap-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--edge-selected))] p-1">
+              <button
+                onClick={() => cycleEdgeLabel(selectedEdge.id)}
+                className="font-mono text-[10px] uppercase tracking-[0.15em] px-2 py-1 hover:bg-[hsl(var(--edge-selected))] hover:text-[hsl(var(--paper))]"
+                style={{ color: "hsl(var(--edge-selected))" }}
+              >
+                {String(selectedEdge.label ?? "next")} ↻
+              </button>
+              <button
+                onClick={() => deleteEdge(selectedEdge.id)}
+                className="font-mono text-[11px] px-2 py-1 hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                style={{ color: "hsl(var(--issue))" }}
+              >
+                ×
+              </button>
+            </div>
+          )}
         </main>
 
-        <aside className="w-[300px] shrink-0 border-l border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col">
+        <aside className="w-[300px] shrink-0 border-l border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col relative">
           <div className="px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
               inspector
@@ -194,31 +457,59 @@ const Index = () => {
             </h2>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} onChange={updateNode} onDelete={deleteNode} />
+            <Inspector
+              node={selected}
+              edges={edges}
+              nodes={nodes}
+              onChange={updateNode}
+              onDelete={deleteNode}
+            />
           </div>
+
+          {showCode && (
+            <div className="absolute inset-0 bg-[hsl(var(--paper))] flex flex-col border-l-2 border-[hsl(var(--ink))] z-20 animate-in slide-in-from-right duration-200">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
+                    python pseudocode
+                  </div>
+                  <h2 className="font-mono text-sm font-semibold text-[hsl(var(--ink))] mt-0.5">
+                    generated · live
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setShowCode(false)}
+                  className="font-mono text-[11px] px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="px-4 py-2 border-b border-dashed border-[hsl(var(--grid-line))]">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(pseudocode);
+                    toast("Pseudocode copied");
+                  }}
+                  className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                >
+                  copy
+                </button>
+              </div>
+              <pre className="flex-1 overflow-auto p-4 font-mono text-[11px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+{pseudocode}
+              </pre>
+            </div>
+          )}
         </aside>
       </div>
-
-      {showCode && (
-        <div className="h-[280px] shrink-0 border-t border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-dashed border-[hsl(var(--grid-line))]">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
-              python pseudocode · generated
-            </div>
-            <button
-              onClick={() => navigator.clipboard.writeText(pseudocode)}
-              className="font-mono text-[10px] uppercase tracking-wider text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] border border-dashed border-[hsl(var(--grid-line))] hover:border-[hsl(var(--ink))] px-2 py-0.5"
-            >
-              copy
-            </button>
-          </div>
-          <pre className="flex-1 overflow-auto p-4 font-mono text-[11px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
-{pseudocode}
-          </pre>
-        </div>
-      )}
     </div>
   );
-};
+}
+
+const Index = () => (
+  <ReactFlowProvider>
+    <Canvas />
+  </ReactFlowProvider>
+);
 
 export default Index;
