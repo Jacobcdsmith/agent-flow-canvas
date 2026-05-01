@@ -8,8 +8,22 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 40 20% 97%;
+    --foreground: 0 0% 12%;
+    --paper: 40 20% 97%;
+    --ink: 0 0% 12%;
+    --ink-soft: 0 0% 35%;
+    --ink-faint: 0 0% 65%;
+    --grid-line: 0 0% 88%;
+
+    --node-trigger: 145 40% 45%;
+    --node-llm: 220 60% 50%;
+    --node-tool: 30 70% 50%;
+    --node-router: 280 40% 50%;
+    --node-subagent: 200 50% 45%;
+    --node-memory: 340 50% 50%;
+    --node-human: 50 80% 45%;
+    --node-sink: 0 0% 25%;
 
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
