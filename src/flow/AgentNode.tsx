@@ -2,32 +2,49 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { AgentNodeData, NODE_TYPES } from "./types";
 import { cn } from "@/lib/utils";
 
-const KIND_TOKEN: Record<string, string> = {
-  trigger: "border-[hsl(var(--node-trigger))] text-[hsl(var(--node-trigger))]",
-  llm: "border-[hsl(var(--node-llm))] text-[hsl(var(--node-llm))]",
-  tool: "border-[hsl(var(--node-tool))] text-[hsl(var(--node-tool))]",
-  router: "border-[hsl(var(--node-router))] text-[hsl(var(--node-router))]",
-  subagent: "border-[hsl(var(--node-subagent))] text-[hsl(var(--node-subagent))]",
-  memory: "border-[hsl(var(--node-memory))] text-[hsl(var(--node-memory))]",
-  human: "border-[hsl(var(--node-human))] text-[hsl(var(--node-human))]",
-  sink: "border-[hsl(var(--node-sink))] text-[hsl(var(--node-sink))]",
+const KIND_COLOR: Record<string, string> = {
+  trigger: "hsl(var(--node-trigger))",
+  llm: "hsl(var(--node-llm))",
+  tool: "hsl(var(--node-tool))",
+  router: "hsl(var(--node-router))",
+  subagent: "hsl(var(--node-subagent))",
+  memory: "hsl(var(--node-memory))",
+  human: "hsl(var(--node-human))",
+  sink: "hsl(var(--node-sink))",
 };
 
-export function AgentNode({ data, selected }: NodeProps<AgentNodeData>) {
+interface ExtraData extends AgentNodeData {
+  hasIssue?: boolean;
+  issueText?: string;
+}
+
+export function AgentNode({ data, selected }: NodeProps<ExtraData>) {
   const meta = NODE_TYPES.find((n) => n.kind === data.kind)!;
-  const tokens = KIND_TOKEN[data.kind];
+  const color = KIND_COLOR[data.kind];
   const entry = data.isEntry || meta.isEntry;
   const terminal = data.isTerminal || meta.isTerminal;
 
   return (
     <div
       className={cn(
-        "w-[240px] bg-[hsl(var(--paper))] border-2 border-dashed font-mono text-[11px]",
-        "transition-shadow",
-        selected ? "shadow-[0_0_0_2px_hsl(var(--ink))]" : "shadow-none",
-        terminal ? "border-solid" : "border-dashed",
+        "w-[240px] bg-[hsl(var(--paper))] font-mono text-[11px] relative",
+        terminal ? "border-2 border-solid" : "border-2 border-dashed",
       )}
+      style={{
+        borderColor: selected ? "hsl(var(--edge-selected))" : "hsl(var(--ink))",
+        borderWidth: selected ? 3 : 2,
+      }}
     >
+      {data.hasIssue && (
+        <div
+          title={data.issueText}
+          className="absolute -top-2 -right-2 w-4 h-4 flex items-center justify-center text-[10px] font-bold text-[hsl(var(--paper))] z-10"
+          style={{ background: "hsl(var(--issue))" }}
+        >
+          !
+        </div>
+      )}
+
       {!entry && (
         <Handle
           type="target"
@@ -37,7 +54,10 @@ export function AgentNode({ data, selected }: NodeProps<AgentNodeData>) {
       )}
 
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-dashed border-[hsl(var(--grid-line))]">
-        <span className={cn("uppercase tracking-[0.15em] text-[10px] font-semibold", tokens.split(" ")[1])}>
+        <span
+          className="uppercase tracking-[0.15em] text-[10px] font-semibold"
+          style={{ color }}
+        >
           {meta.label}
         </span>
         {entry && (
@@ -58,7 +78,7 @@ export function AgentNode({ data, selected }: NodeProps<AgentNodeData>) {
         </div>
         <div className="space-y-1">
           {meta.configFields.map((f) => {
-            const val = data.config[f.key];
+            const val = data.config?.[f.key];
             if (!val) return null;
             return (
               <div key={f.key} className="flex gap-1.5 text-[10px] leading-tight">
@@ -68,6 +88,14 @@ export function AgentNode({ data, selected }: NodeProps<AgentNodeData>) {
             );
           })}
         </div>
+        {data.hasIssue && data.issueText && (
+          <div
+            className="mt-2 text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed"
+            style={{ color: "hsl(var(--issue))", borderColor: "hsl(var(--issue))" }}
+          >
+            {data.issueText}
+          </div>
+        )}
       </div>
 
       {!terminal && (
