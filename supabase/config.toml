@@ -1,0 +1,4 @@
+project_id = "rsnlqptxsnaafvknxwxm"
+
+[functions.flow-run]
+verify_jwt = false

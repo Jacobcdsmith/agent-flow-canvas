@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { NODE_TYPES, NodeTypeMeta } from "./types";
 
 interface Props {
@@ -16,6 +17,21 @@ const KIND_COLOR: Record<string, string> = {
 };
 
 export function Palette({ onAdd }: Props) {
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return NODE_TYPES;
+    return NODE_TYPES.filter((m) => {
+      return (
+        m.label.toLowerCase().includes(q) ||
+        m.kind.toLowerCase().includes(q) ||
+        m.description.toLowerCase().includes(q) ||
+        m.defaultName.toLowerCase().includes(q) ||
+        m.configFields.some((f) => f.key.toLowerCase().includes(q))
+      );
+    });
+  }, [query]);
+
   return (
     <aside className="w-[280px] shrink-0 border-r border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col min-h-0">
       <div className="px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
@@ -25,10 +41,33 @@ export function Palette({ onAdd }: Props) {
         <h2 className="font-mono text-sm font-semibold text-[hsl(var(--ink))] mt-0.5">
           Node types
         </h2>
+        <div className="mt-2 flex items-center gap-1.5 border border-dashed border-[hsl(var(--grid-line))] focus-within:border-[hsl(var(--ink))] px-2">
+          <span className="font-mono text-[10px] text-[hsl(var(--ink-faint))]">/</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search nodes…"
+            className="flex-1 bg-transparent py-1.5 font-mono text-[11px] text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))] outline-none"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="font-mono text-[11px] text-[hsl(var(--ink-faint))] hover:text-[hsl(var(--ink))]"
+              aria-label="clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
       <div className="relative flex-1 min-h-0">
         <div className="absolute inset-0 overflow-y-auto p-3 space-y-2">
-          {NODE_TYPES.map((meta) => (
+          {filtered.length === 0 && (
+            <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] px-1 py-2">
+              no node type matches “{query}”
+            </div>
+          )}
+          {filtered.map((meta) => (
             <button
               key={meta.kind}
               onClick={() => onAdd(meta)}
