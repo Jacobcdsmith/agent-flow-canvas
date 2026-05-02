@@ -46,6 +46,8 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     configFields: [
       { key: "model", label: "model", placeholder: "gpt-5 | claude-4" },
       { key: "prompt", label: "prompt", placeholder: "You are a helpful agent…" },
+      { key: "temperature", label: "temperature", placeholder: "(global)  e.g. 0.7" },
+      { key: "max_tokens", label: "max_tokens", placeholder: "(global)  e.g. 1024" },
     ],
   },
   {

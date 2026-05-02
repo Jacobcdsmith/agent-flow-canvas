@@ -28,6 +28,8 @@ import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { supabase } from "@/integrations/supabase/client";
+import { GatewaySettings, DEFAULT_GATEWAY, type GatewayConfig } from "@/flow/GatewaySettings";
+import { IntroTutorial } from "@/flow/IntroTutorial";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -63,6 +65,34 @@ function Canvas() {
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
+
+  // ---- Gateway settings + intro/tutorial ----
+  const [gateway, setGateway] = useState<GatewayConfig>(() => {
+    try {
+      const raw = localStorage.getItem("agent_flow.gateway");
+      if (raw) return { ...DEFAULT_GATEWAY, ...JSON.parse(raw) };
+    } catch {}
+    return DEFAULT_GATEWAY;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("agent_flow.gateway", JSON.stringify(gateway));
+    } catch {}
+  }, [gateway]);
+  const [showGateway, setShowGateway] = useState(false);
+  const [showIntro, setShowIntro] = useState(() => {
+    try {
+      return localStorage.getItem("agent_flow.intro_seen") !== "1";
+    } catch {
+      return true;
+    }
+  });
+  const dismissIntro = useCallback(() => {
+    setShowIntro(false);
+    try {
+      localStorage.setItem("agent_flow.intro_seen", "1");
+    } catch {}
+  }, []);
 
   // ---- undo stack ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
@@ -357,6 +387,7 @@ function Canvas() {
         nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
         edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
         initialState: { query: "hello world" },
+        gateway,
       };
       const { data, error } = await supabase.functions.invoke("flow-run", { body: payload });
       if (error) throw error;
@@ -370,7 +401,7 @@ function Canvas() {
     } finally {
       setRunning(false);
     }
-  }, [nodes, edges]);
+  }, [nodes, edges, gateway]);
 
   return (
     <div
@@ -402,6 +433,21 @@ function Canvas() {
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
             validate
+          </button>
+          <button
+            onClick={() => setShowGateway(true)}
+            title="Configure MCP gateway (base URL, model, temperature, max tokens)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">⚙ gateway</span>
+            <span className="sm:hidden">⚙</span>
+          </button>
+          <button
+            onClick={() => setShowIntro(true)}
+            title="Open tutorial"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ?
           </button>
           <button
             onClick={runFlow}
@@ -742,6 +788,22 @@ function Canvas() {
             ))}
           </div>
         </div>
+      )}
+
+      {showGateway && (
+        <GatewaySettings
+          config={gateway}
+          onChange={setGateway}
+          onClose={() => setShowGateway(false)}
+          onReset={() => setGateway(DEFAULT_GATEWAY)}
+        />
+      )}
+
+      {showIntro && (
+        <IntroTutorial
+          onClose={dismissIntro}
+          onOpenGateway={() => setShowGateway(true)}
+        />
       )}
     </div>
   );
