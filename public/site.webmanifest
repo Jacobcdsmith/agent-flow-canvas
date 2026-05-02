@@ -1,0 +1,28 @@
+{
+  "name": "Agent Flow Canvas",
+  "short_name": "Agent Flow",
+  "description": "Free drag-and-drop visual builder for Python AI agent workflows",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f0eb",
+  "theme_color": "#f5f0eb",
+  "orientation": "landscape-primary",
+  "categories": ["developer tools", "productivity", "utilities"],
+  "lang": "en-US",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "https://lovable.dev/opengraph-image-p98pqg.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "label": "Agent Flow Canvas wireframe workflow designer"
+    }
+  ]
+}

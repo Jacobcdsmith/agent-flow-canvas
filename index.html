@@ -1,19 +1,186 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" prefix="og: http://ogp.me/ns#">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- TODO: Set the document title to the name of your application -->
-    <title>Agent Flow — Wireframe Canvas for Python Agent Workflows</title>
-    <meta name="description" content="Design, connect, and visualize Python agent workflows on a clean wireframe canvas." />
-    <meta property="og:title" content="Agent Flow — Wireframe Canvas" />
-    <meta property="og:description" content="Lo-fi drag-and-drop builder for Python agent pipelines." />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
 
+    <!-- ═══════════════════════════════════════════════
+         CORE SEO
+    ═══════════════════════════════════════════════ -->
+    <title>Agent Flow Canvas — Free Drag-and-Drop Python AI Agent Workflow Builder</title>
+    <meta name="description" content="Agent Flow Canvas is a free, browser-based visual workflow builder for Python AI agents. Drag, drop, and connect LLM nodes, tool calls, routers, memory steps, and human-in-the-loop gates — then export production-ready pseudocode in one click." />
+    <meta name="keywords" content="AI agent workflow builder, Python agent pipeline, LangGraph visual editor, AutoGen workflow designer, drag drop agent canvas, LLM workflow tool, multi-agent orchestration, agent flow diagram, Python AI workflow, agent pipeline designer, AI agent framework, visual AI builder" />
+    <meta name="author" content="Agent Flow Canvas" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <link rel="canonical" href="https://p98pqg.lovable.app/" />
+
+    <!-- ═══════════════════════════════════════════════
+         GEO TARGETING
+    ═══════════════════════════════════════════════ -->
+    <meta name="geo.region" content="US" />
+    <meta name="geo.placename" content="United States" />
+    <meta name="language" content="English" />
+    <link rel="alternate" hreflang="en" href="https://p98pqg.lovable.app/" />
+    <link rel="alternate" hreflang="x-default" href="https://p98pqg.lovable.app/" />
+
+    <!-- ═══════════════════════════════════════════════
+         OPEN GRAPH (Facebook, LinkedIn, Discord…)
+    ═══════════════════════════════════════════════ -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://p98pqg.lovable.app/" />
+    <meta property="og:site_name" content="Agent Flow Canvas" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Agent Flow Canvas — Visual Python AI Agent Workflow Builder" />
+    <meta property="og:description" content="Design production-ready Python AI agent pipelines visually. Drag-and-drop LLM nodes, tool calls, routers, memory, and human-in-the-loop steps — export clean pseudocode instantly. Free, no login required." />
+    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Agent Flow Canvas — drag-and-drop AI agent workflow diagram showing LLM nodes, tool calls, and routers connected on a wireframe canvas" />
+
+    <!-- ═══════════════════════════════════════════════
+         TWITTER / X CARD
+    ═══════════════════════════════════════════════ -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@Lovable" />
+    <meta name="twitter:title" content="Agent Flow Canvas — Visual Python AI Agent Workflow Builder" />
+    <meta name="twitter:description" content="Free drag-and-drop canvas for designing Python AI agent pipelines. Connect LLM nodes, tool calls, routers, and memory steps — export pseudocode instantly." />
     <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta name="twitter:image:alt" content="Agent Flow Canvas wireframe diagram" />
+
+    <!-- ═══════════════════════════════════════════════
+         PWA / APPEARANCE
+    ═══════════════════════════════════════════════ -->
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#f5f0eb" />
+    <meta name="application-name" content="Agent Flow Canvas" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Agent Flow Canvas" />
+
+    <!-- ═══════════════════════════════════════════════
+         AEO — STRUCTURED DATA (JSON-LD)
+         SoftwareApplication + FAQ
+    ═══════════════════════════════════════════════ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Agent Flow Canvas",
+      "url": "https://p98pqg.lovable.app/",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "AI Workflow Tool",
+      "operatingSystem": "Any (browser-based)",
+      "browserRequirements": "Requires JavaScript. Works in Chrome, Firefox, Safari, Edge.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "description": "Agent Flow Canvas is a free, browser-based drag-and-drop wireframe builder for designing Python AI agent pipelines. Users can visually compose multi-agent workflows from LLM reasoning nodes, tool calls, condition routers, memory read/write steps, human-in-the-loop gates, and output sinks — then export the design as production-ready Python pseudocode.",
+      "screenshot": "https://lovable.dev/opengraph-image-p98pqg.png",
+      "featureList": [
+        "Drag-and-drop node canvas powered by React Flow",
+        "8 built-in node types: Trigger, LLM Agent, Tool Call, Condition/Router, Subagent, Memory R/W, Human-in-the-Loop, Output Sink",
+        "Visual edge connections with labeled flow types: next, on_success, on_error, tool_result, true, false",
+        "Live Python pseudocode generation from the visual graph",
+        "Graph validation with inline issue highlighting",
+        "Import and export workflows as JSON",
+        "Undo history with keyboard shortcut support",
+        "Zero-install — runs entirely in the browser with no login required"
+      ],
+      "keywords": "AI agent workflow, Python agent pipeline, LangGraph visual editor, drag-and-drop AI, multi-agent orchestration, LLM workflow builder",
+      "inLanguage": "en-US",
+      "isAccessibleForFree": true,
+      "creator": {
+        "@type": "Person",
+        "name": "Jacobcdsmith"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Agent Flow Canvas?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Agent Flow Canvas is a free, browser-based visual tool for designing Python AI agent workflows. You drag and drop nodes — such as LLM agents, tool calls, routers, and memory steps — onto a canvas, connect them with typed edges, and export the resulting pipeline as Python pseudocode."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What node types does Agent Flow Canvas support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Agent Flow Canvas includes eight node types: Trigger (entry point for webhooks, schedules, or CLI), LLM Agent (chat-completion reasoning step), Tool Call (invoke a Python function), Condition/Router (branch on a predicate), Subagent (delegate to a nested graph), Memory R/W (read or write persistent memory), Human-in-the-Loop (pause for human approval), and Output/Sink (terminal result node)."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Agent Flow Canvas generate code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Click 'view pseudocode' in the toolbar and Agent Flow Canvas instantly generates Python pseudocode from your visual workflow graph. The pseudocode reflects your node configuration and edge routing logic and can be copied to the clipboard."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Agent Flow Canvas free to use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Agent Flow Canvas is completely free. It runs entirely in your browser with no login, no account, and no installation required."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I export and import my agent workflow?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Use the 'export json' button to copy your workflow graph (nodes and edges) to your clipboard as JSON. Use 'import json' to restore a previously exported graph from the clipboard."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What frameworks does Agent Flow Canvas work with?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Agent Flow Canvas is framework-agnostic. The visual canvas and pseudocode output are designed to map naturally to frameworks like LangGraph, LangChain, AutoGen, CrewAI, and custom Python agent architectures."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I connect nodes in Agent Flow Canvas?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Drag from the output handle of one node to the input handle of another. After connecting, click the edge to select it, then click the edge label to cycle through flow types: next, on_success, on_error, tool_result, true, or false."
+          }
+        }
+      ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Agent Flow Canvas",
+      "url": "https://p98pqg.lovable.app/",
+      "description": "Visual drag-and-drop builder for Python AI agent pipelines",
+      "applicationCategory": "DeveloperApplication",
+      "genre": "AI Tools",
+      "audience": {
+        "@type": "Audience",
+        "audienceType": "Developers, AI engineers, data scientists building agentic AI systems"
+      },
+      "potentialAction": {
+        "@type": "UseAction",
+        "target": "https://p98pqg.lovable.app/"
+      }
+    }
+    </script>
   </head>
 
   <body>
