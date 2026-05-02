@@ -630,7 +630,7 @@ function Canvas() {
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-10">
               <button
                 onClick={() => setMobilePanel("palette")}
-                className="font-mono text-[11px] px-3 py-2 border border-dashed border-[hsl(var(--ink))] text-[hsl(var(--paper))] shadow"
+                className="font-mono text-[11px] px-3 py-2 border border-dashed border-[hsl(var(--ink))] text-[hsl(var(--paper))]"
                 style={{ background: "var(--gradient-accent)" }}
               >
                 + node
