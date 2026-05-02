@@ -28,7 +28,7 @@ import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { supabase } from "@/integrations/supabase/client";
-import { GatewaySettings, GatewayConfig, DEFAULT_GATEWAY } from "@/flow/GatewaySettings";
+import { GatewaySettings, DEFAULT_GATEWAY, type GatewayConfig } from "@/flow/GatewaySettings";
 import { IntroTutorial } from "@/flow/IntroTutorial";
 
 const nodeTypes = { agent: AgentNode };
