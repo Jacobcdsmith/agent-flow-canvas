@@ -322,10 +322,14 @@ function Canvas() {
 
   const runValidate = useCallback(() => {
     const found = validateGraph(nodes, edges);
-    setIssues(found);
+    const py = generateCode("python", nodes, edges);
+    const lint = lintPython(py.code).map((m) => ({ kind: "orphan" as const, message: `python: ${m}` }));
+    const genErrs = py.errors.map((m) => ({ kind: "orphan" as const, message: `codegen: ${m}` }));
+    const all = [...found, ...lint, ...genErrs];
+    setIssues(all);
     setValidated(true);
-    if (found.length === 0) toast.success("Graph is valid");
-    else toast.error(`${found.length} issue${found.length > 1 ? "s" : ""} found`);
+    if (all.length === 0) toast.success("Graph & generated Python valid");
+    else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
   }, [nodes, edges]);
 
   return (
