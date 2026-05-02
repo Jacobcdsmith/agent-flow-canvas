@@ -29,7 +29,9 @@ import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { supabase } from "@/integrations/supabase/client";
 import { GatewaySettings, DEFAULT_GATEWAY, type GatewayConfig } from "@/flow/GatewaySettings";
+import { validateGateway, hasGatewayErrors } from "@/flow/GatewaySettings";
 import { IntroTutorial } from "@/flow/IntroTutorial";
+import { SampleWalkthrough } from "@/flow/SampleWalkthrough";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -80,6 +82,16 @@ function Canvas() {
     } catch {}
   }, [gateway]);
   const [showGateway, setShowGateway] = useState(false);
+  const [showSample, setShowSample] = useState(false);
+  const [highlight, setHighlight] = useState<{
+    nodeIds: Set<string>;
+    edgeIds: Set<string>;
+    color: string;
+  } | null>(null);
+
+  const gatewayErrors = useMemo(() => validateGateway(gateway), [gateway]);
+  const gatewayInvalid = hasGatewayErrors(gatewayErrors);
+
   const [showIntro, setShowIntro] = useState(() => {
     try {
       return localStorage.getItem("agent_flow.intro_seen") !== "1";
@@ -137,26 +149,46 @@ function Canvas() {
           hasIssue: validated && issueByNode.has(n.id),
           issueText: issueByNode.get(n.id),
         },
+        style: highlight
+          ? highlight.nodeIds.has(n.id)
+            ? {
+                outline: `2px solid ${highlight.color}`,
+                outlineOffset: 4,
+                borderRadius: 2,
+                transition: "outline 150ms ease",
+              }
+            : { opacity: 0.35, transition: "opacity 150ms ease" }
+          : undefined,
       })),
-    [nodes, issueByNode, validated],
+    [nodes, issueByNode, validated, highlight],
   );
 
   const renderedEdges = useMemo(
     () =>
       edges.map((e) => {
         const isSel = e.id === selectedEdgeId;
+        const isHi = highlight?.edgeIds.has(e.id);
+        const dim = highlight && !isHi;
         return {
           ...e,
           type: "smoothstep" as const,
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
+            color: isHi
+              ? highlight!.color
+              : isSel
+                ? "hsl(var(--edge-selected))"
+                : "hsl(var(--ink-soft))",
           },
           style: {
-            stroke: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
-            strokeWidth: isSel ? 2 : 1,
-            strokeDasharray: isSel ? "6 3" : "3 3",
-            opacity: isSel ? 1 : 0.7,
+            stroke: isHi
+              ? highlight!.color
+              : isSel
+                ? "hsl(var(--edge-selected))"
+                : "hsl(var(--ink-soft))",
+            strokeWidth: isHi ? 2.5 : isSel ? 2 : 1,
+            strokeDasharray: isHi ? "0" : isSel ? "6 3" : "3 3",
+            opacity: dim ? 0.2 : isSel || isHi ? 1 : 0.7,
           },
           labelStyle: {
             fontFamily: "ui-monospace, monospace",
@@ -164,11 +196,19 @@ function Canvas() {
             fontWeight: 600,
             letterSpacing: "0.1em",
             textTransform: "uppercase" as const,
-            fill: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-soft))",
+            fill: isHi
+              ? highlight!.color
+              : isSel
+                ? "hsl(var(--edge-selected))"
+                : "hsl(var(--ink-soft))",
           },
           labelBgStyle: {
             fill: "hsl(var(--paper))",
-            stroke: isSel ? "hsl(var(--edge-selected))" : "hsl(var(--ink-faint))",
+            stroke: isHi
+              ? highlight!.color
+              : isSel
+                ? "hsl(var(--edge-selected))"
+                : "hsl(var(--ink-faint))",
             strokeWidth: 0.5,
           },
           labelBgPadding: [6, 3] as [number, number],
@@ -176,7 +216,7 @@ function Canvas() {
           label: String(e.label ?? "next"),
         };
       }),
-    [edges, selectedEdgeId],
+    [edges, selectedEdgeId, highlight],
   );
 
   const onNodesChange = useCallback(
@@ -379,6 +419,12 @@ function Canvas() {
   }, [nodes, edges]);
 
   const runFlow = useCallback(async () => {
+    if (gatewayInvalid) {
+      const first = Object.values(gatewayErrors)[0];
+      toast.error(`Gateway invalid — ${first}`);
+      setShowGateway(true);
+      return;
+    }
     setRunning(true);
     setShowRun(true);
     setRunLogs(null);
@@ -401,7 +447,16 @@ function Canvas() {
     } finally {
       setRunning(false);
     }
-  }, [nodes, edges, gateway]);
+  }, [nodes, edges, gateway, gatewayInvalid, gatewayErrors]);
+
+  const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
+    snapshot();
+    setNodes(ns);
+    setEdges(es);
+    setIssues([]);
+    setValidated(false);
+    setSelectedEdgeId(null);
+  }, [snapshot]);
 
   return (
     <div
@@ -436,11 +491,27 @@ function Canvas() {
           </button>
           <button
             onClick={() => setShowGateway(true)}
-            title="Configure MCP gateway (base URL, model, temperature, max tokens)"
+            title={
+              gatewayInvalid
+                ? `Gateway invalid: ${Object.values(gatewayErrors).join(" · ")}`
+                : "Configure MCP gateway (base URL, model, temperature, max tokens)"
+            }
+            className={`font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed transition-colors ${
+              gatewayInvalid
+                ? "border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                : "border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+            }`}
+          >
+            <span className="hidden sm:inline">⚙ gateway{gatewayInvalid ? " ⚠" : ""}</span>
+            <span className="sm:hidden">⚙{gatewayInvalid ? "⚠" : ""}</span>
+          </button>
+          <button
+            onClick={() => setShowSample(true)}
+            title="Load the sample ReAct workflow and walk through tool, memory, and fallback nodes"
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
-            <span className="hidden sm:inline">⚙ gateway</span>
-            <span className="sm:hidden">⚙</span>
+            <span className="hidden sm:inline">▤ sample</span>
+            <span className="sm:hidden">▤</span>
           </button>
           <button
             onClick={() => setShowIntro(true)}
@@ -451,9 +522,13 @@ function Canvas() {
           </button>
           <button
             onClick={runFlow}
-            disabled={running}
-            title="Execute flow via MCP gateway (routes LLM nodes through Lovable AI)"
-            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed text-[hsl(var(--paper))] disabled:opacity-50"
+            disabled={running || gatewayInvalid}
+            title={
+              gatewayInvalid
+                ? `Cannot run — fix gateway: ${Object.values(gatewayErrors).join(" · ")}`
+                : "Execute flow via MCP gateway (routes LLM nodes through Lovable AI)"
+            }
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed text-[hsl(var(--paper))] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ background: "var(--gradient-accent)", borderColor: "hsl(var(--accent-deep))" }}
           >
             {running ? "running…" : "▶ run"}
@@ -803,6 +878,18 @@ function Canvas() {
         <IntroTutorial
           onClose={dismissIntro}
           onOpenGateway={() => setShowGateway(true)}
+        />
+      )}
+
+      {showSample && (
+        <SampleWalkthrough
+          onClose={() => setShowSample(false)}
+          loadGraph={loadSampleGraph}
+          setHighlight={setHighlight}
+          selectNode={(id) => {
+            setSelectedId(id);
+            setSelectedEdgeId(null);
+          }}
         />
       )}
     </div>
