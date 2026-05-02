@@ -678,6 +678,71 @@ function Canvas() {
           </pre>
         </div>
       )}
+
+      {/* MCP gateway run drawer (desktop + mobile) */}
+      {showRun && (
+        <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-[440px] flex flex-col bg-[hsl(var(--paper))] border-l-2 border-[hsl(var(--ink))] animate-in slide-in-from-right duration-200">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">mcp gateway · run log</div>
+              <h2 className="font-mono text-sm font-semibold">
+                {running ? "executing flow…" : runLogs ? `${runLogs.length} step${runLogs.length === 1 ? "" : "s"}` : "ready"}
+              </h2>
+            </div>
+            <div className="flex gap-1.5">
+              <button
+                onClick={runFlow}
+                disabled={running}
+                className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-50"
+              >
+                rerun
+              </button>
+              <button
+                onClick={() => setShowRun(false)}
+                className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]"
+              >
+                close
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto p-3 space-y-2">
+            {running && (
+              <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
+                routing through ai gateway…
+              </div>
+            )}
+            {runLogs && runLogs.length === 0 && !running && (
+              <div className="font-mono text-[10px] text-[hsl(var(--issue))] uppercase tracking-[0.15em]">
+                no logs — see toast for error
+              </div>
+            )}
+            {runLogs?.map((l) => (
+              <div
+                key={`${l.step}-${l.nodeId}`}
+                className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
+                style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
+                  <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
+                  <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
+                  <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
+                </div>
+                <div className="text-[hsl(var(--ink-soft))]">
+                  → <span className="uppercase tracking-wider">{l.label}</span>
+                </div>
+                {l.error ? (
+                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
+                ) : (
+                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+{typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
