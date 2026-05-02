@@ -34,7 +34,7 @@ export function Palette({ onAdd }: Props) {
 
   return (
     <aside className="w-[280px] shrink-0 border-r border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col min-h-0">
-      <div className="px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
+      <div className="px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))] bg-[#adfae4]">
         <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
           palette
         </div>
@@ -61,7 +61,7 @@ export function Palette({ onAdd }: Props) {
         </div>
       </div>
       <div className="relative flex-1 min-h-0">
-        <div className="absolute inset-0 overflow-y-auto p-3 space-y-2">
+        <div className="absolute inset-0 overflow-y-auto p-3 space-y-2 bg-[#14ff7e]/15">
           {filtered.length === 0 && (
             <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] px-1 py-2">
               no node type matches “{query}”
