@@ -464,7 +464,7 @@ function Canvas() {
       style={{ background: "var(--gradient-paper)" }}
     >
       <header
-        className="h-12 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-dashed border-[hsl(var(--grid-line))] bg-[#d2f9e9]"
+        className="h-12 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-dashed border-[hsl(var(--grid-line))] backdrop-blur-sm"
         style={{ background: "var(--gradient-header)" }}
       >
         <div className="flex items-center gap-3">
