@@ -24,8 +24,9 @@ import { Palette } from "@/flow/Palette";
 import { Inspector } from "@/flow/Inspector";
 import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
-import { generatePseudocode } from "@/flow/pseudocode";
+import { generatePseudocode, generateJsPseudocode } from "@/flow/pseudocode";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -34,12 +35,15 @@ const nextId = () => `n${++idCounter}`;
 
 function Canvas() {
   const rf = useReactFlow();
+  const isMobile = useIsMobile();
 
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(exampleNodes);
   const [edges, setEdges] = useState<Edge[]>(exampleEdges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const [codeLang, setCodeLang] = useState<"python" | "javascript">("python");
+  const [mobilePanel, setMobilePanel] = useState<"none" | "palette" | "inspector">("none");
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
@@ -255,7 +259,10 @@ function Canvas() {
     [edges, selectedEdgeId],
   );
 
-  const pseudocode = useMemo(() => generatePseudocode(nodes, edges), [nodes, edges]);
+  const pseudocode = useMemo(
+    () => (codeLang === "python" ? generatePseudocode(nodes, edges) : generateJsPseudocode(nodes, edges)),
+    [nodes, edges, codeLang],
+  );
 
   // export / import
   const exportJSON = useCallback(() => {
@@ -317,46 +324,54 @@ function Canvas() {
   }, [nodes, edges]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[hsl(var(--paper))] text-[hsl(var(--ink))] overflow-hidden">
-      <header className="h-12 shrink-0 flex items-center justify-between px-4 border-b border-dashed border-[hsl(var(--grid-line))]">
+    <div
+      className="h-screen w-screen flex flex-col text-[hsl(var(--ink))] overflow-hidden"
+      style={{ background: "var(--gradient-paper)" }}
+    >
+      <header
+        className="h-12 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-dashed border-[hsl(var(--grid-line))]"
+        style={{ background: "var(--gradient-header)" }}
+      >
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-[hsl(var(--ink))] relative">
-            <div className="absolute inset-1 bg-[hsl(var(--ink))]" />
-          </div>
+          <div
+            className="w-5 h-5 border-2 border-[hsl(var(--ink))] relative shrink-0"
+            style={{ background: "var(--gradient-accent)" }}
+          />
           <h1 className="font-mono text-[13px] font-semibold tracking-tight">
             agent_flow<span className="text-[hsl(var(--ink-faint))]">.canvas</span>
           </h1>
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))] ml-2">
-            wireframe · v0.2
+          <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))] ml-2">
+            wireframe · v0.3
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-[hsl(var(--ink-faint))]">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
           <button
             onClick={runValidate}
-            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
             validate
           </button>
           <button
             onClick={exportJSON}
-            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            className="hidden sm:inline-flex font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
             export json
           </button>
           <button
             onClick={importJSON}
-            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            className="hidden sm:inline-flex font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
             import json
           </button>
           <button
             onClick={() => setShowCode((v) => !v)}
-            className="font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed text-[hsl(var(--paper))] transition-colors"
+            style={{ background: "var(--gradient-accent)", borderColor: "hsl(var(--accent-deep))" }}
           >
-            {showCode ? "hide pseudocode" : "view pseudocode"}
+            {showCode ? "hide code" : "view code"}
           </button>
         </div>
       </header>
@@ -378,7 +393,7 @@ function Canvas() {
       )}
 
       <div className="flex-1 flex min-h-0">
-        <Palette onAdd={addNode} />
+        {!isMobile && <Palette onAdd={addNode} />}
 
         <main className="flex-1 relative min-w-0">
           <ReactFlow
@@ -390,6 +405,7 @@ function Canvas() {
             onNodeClick={(_, n) => {
               setSelectedId(n.id);
               setSelectedEdgeId(null);
+              if (isMobile) setMobilePanel("inspector");
             }}
             onPaneClick={() => {
               setSelectedId(null);
@@ -402,7 +418,7 @@ function Canvas() {
             nodeTypes={nodeTypes}
             fitView
             proOptions={{ hideAttribution: true }}
-            style={{ background: "hsl(var(--paper))" }}
+            style={{ background: "transparent" }}
           >
             <Background
               variant={BackgroundVariant.Dots}
@@ -414,21 +430,45 @@ function Canvas() {
               showInteractive={false}
               className="!bg-[hsl(var(--paper))] !border !border-dashed !border-[hsl(var(--grid-line))] !shadow-none"
             />
-            <MiniMap
-              pannable
-              zoomable
-              maskColor="hsl(var(--paper) / 0.7)"
-              nodeColor={() => "hsl(var(--ink))"}
-              className="!bg-[hsl(var(--paper))] !border !border-dashed !border-[hsl(var(--grid-line))]"
-            />
+            {!isMobile && (
+              <MiniMap
+                pannable
+                zoomable
+                maskColor="hsl(var(--paper) / 0.7)"
+                nodeColor={() => "hsl(var(--ink))"}
+                className="!bg-[hsl(var(--paper))] !border !border-dashed !border-[hsl(var(--grid-line))]"
+              />
+            )}
           </ReactFlow>
 
-          <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-            click edge → select · drag handles → connect · del / esc / ⌘z
-          </div>
+          {!isMobile && (
+            <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
+              click edge → select · drag handles → connect · del / esc / ⌘z
+            </div>
+          )}
+
+          {isMobile && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+              <button
+                onClick={() => setMobilePanel("palette")}
+                className="font-mono text-[11px] px-3 py-2 border border-dashed border-[hsl(var(--ink))] text-[hsl(var(--paper))] shadow"
+                style={{ background: "var(--gradient-accent)" }}
+              >
+                + node
+              </button>
+              {selected && (
+                <button
+                  onClick={() => setMobilePanel("inspector")}
+                  className="font-mono text-[11px] px-3 py-2 border border-dashed border-[hsl(var(--ink))] bg-[hsl(var(--paper))]"
+                >
+                  inspect
+                </button>
+              )}
+            </div>
+          )}
 
           {selectedEdge && (
-            <div className="absolute top-3 right-3 flex items-center gap-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--edge-selected))] p-1">
+            <div className="absolute top-3 right-3 flex items-center gap-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--edge-selected))] p-1 z-10">
               <button
                 onClick={() => cycleEdgeLabel(selectedEdge.id)}
                 className="font-mono text-[10px] uppercase tracking-[0.15em] px-2 py-1 hover:bg-[hsl(var(--edge-selected))] hover:text-[hsl(var(--paper))]"
@@ -447,6 +487,7 @@ function Canvas() {
           )}
         </main>
 
+        {!isMobile && (
         <aside className="w-[300px] shrink-0 border-l border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] flex flex-col relative">
           <div className="px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
@@ -471,7 +512,7 @@ function Canvas() {
               <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]">
                 <div>
                   <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
-                    python pseudocode
+                    {codeLang} pseudocode
                   </div>
                   <h2 className="font-mono text-sm font-semibold text-[hsl(var(--ink))] mt-0.5">
                     generated · live
@@ -484,11 +525,27 @@ function Canvas() {
                   ×
                 </button>
               </div>
-              <div className="px-4 py-2 border-b border-dashed border-[hsl(var(--grid-line))]">
+              <div className="px-4 py-2 border-b border-dashed border-[hsl(var(--grid-line))] flex gap-2">
+                <div className="flex border border-dashed border-[hsl(var(--ink))]">
+                  {(["python", "javascript"] as const).map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => setCodeLang(l)}
+                      className="font-mono text-[10px] uppercase tracking-wider px-2 py-1"
+                      style={
+                        codeLang === l
+                          ? { background: "var(--gradient-accent)", color: "hsl(var(--paper))" }
+                          : { color: "hsl(var(--ink))" }
+                      }
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(pseudocode);
-                    toast("Pseudocode copied");
+                    toast(`${codeLang} copied`);
                   }}
                   className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
                 >
@@ -501,7 +558,68 @@ function Canvas() {
             </div>
           )}
         </aside>
+        )}
       </div>
+
+      {/* Mobile: palette drawer */}
+      {isMobile && mobilePanel === "palette" && (
+        <div className="fixed inset-0 z-30 flex flex-col bg-[hsl(var(--paper))] animate-in slide-in-from-bottom duration-200">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
+            <h2 className="font-mono text-sm font-semibold">add node</h2>
+            <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <Palette onAdd={(m) => { addNode(m); setMobilePanel("none"); }} />
+          </div>
+        </div>
+      )}
+
+      {/* Mobile: inspector drawer */}
+      {isMobile && mobilePanel === "inspector" && (
+        <div className="fixed inset-0 z-30 flex flex-col bg-[hsl(var(--paper))] animate-in slide-in-from-bottom duration-200">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">inspector</div>
+              <h2 className="font-mono text-sm font-semibold">{selected ? selected.data.name : "no selection"}</h2>
+            </div>
+            <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <Inspector node={selected} edges={edges} nodes={nodes} onChange={updateNode} onDelete={deleteNode} />
+          </div>
+        </div>
+      )}
+
+      {/* Mobile: code drawer (full screen overlay) */}
+      {isMobile && showCode && (
+        <div className="fixed inset-0 z-30 flex flex-col bg-[hsl(var(--paper))] animate-in slide-in-from-bottom duration-200">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">{codeLang} pseudocode</div>
+              <h2 className="font-mono text-sm font-semibold">generated · live</h2>
+            </div>
+            <button onClick={() => setShowCode(false)} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
+          </div>
+          <div className="px-4 py-2 border-b border-dashed border-[hsl(var(--grid-line))] flex gap-2">
+            <div className="flex border border-dashed border-[hsl(var(--ink))]">
+              {(["python", "javascript"] as const).map((l) => (
+                <button key={l} onClick={() => setCodeLang(l)}
+                  className="font-mono text-[10px] uppercase tracking-wider px-2 py-1"
+                  style={codeLang === l ? { background: "var(--gradient-accent)", color: "hsl(var(--paper))" } : { color: "hsl(var(--ink))" }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { navigator.clipboard.writeText(pseudocode); toast(`${codeLang} copied`); }}
+              className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))]">copy</button>
+            <button onClick={exportJSON} className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] ml-auto">export</button>
+            <button onClick={importJSON} className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))]">import</button>
+          </div>
+          <pre className="flex-1 overflow-auto p-4 font-mono text-[11px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+{pseudocode}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
