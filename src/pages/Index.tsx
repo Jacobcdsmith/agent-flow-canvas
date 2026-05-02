@@ -27,6 +27,7 @@ import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { supabase } from "@/integrations/supabase/client";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -47,6 +48,21 @@ function Canvas() {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
+
+  // ---- MCP gateway run state ----
+  interface RunLog {
+    step: number;
+    nodeId: string;
+    name: string;
+    kind: string;
+    label: string;
+    output?: unknown;
+    error?: string;
+    ms: number;
+  }
+  const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [showRun, setShowRun] = useState(false);
 
   // ---- undo stack ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
@@ -330,6 +346,30 @@ function Canvas() {
     setValidated(true);
     if (all.length === 0) toast.success("Graph & generated Python valid");
     else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
+  }, [nodes, edges]);
+
+  const runFlow = useCallback(async () => {
+    setRunning(true);
+    setShowRun(true);
+    setRunLogs(null);
+    try {
+      const payload = {
+        nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
+        edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
+        initialState: { query: "hello world" },
+      };
+      const { data, error } = await supabase.functions.invoke("flow-run", { body: payload });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error ?? "run failed");
+      setRunLogs(data.logs as RunLog[]);
+      toast.success(`Flow ran in ${data.logs.length} steps`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Run failed: ${msg}`);
+      setRunLogs([]);
+    } finally {
+      setRunning(false);
+    }
   }, [nodes, edges]);
 
   return (
