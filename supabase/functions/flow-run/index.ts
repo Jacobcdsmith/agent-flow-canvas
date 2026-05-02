@@ -41,6 +41,12 @@ interface RunBody {
   edges: FlowEdge[];
   initialState?: Record<string, unknown>;
   maxSteps?: number;
+  gateway?: {
+    baseUrl?: string;
+    defaultModel?: string;
+    temperature?: number;
+    maxTokens?: number;
+  };
 }
 
 interface LogEntry {
@@ -54,22 +60,32 @@ interface LogEntry {
   ms: number;
 }
 
-async function callLovableAI(model: string, prompt: string, userInput: unknown) {
+interface GatewayOpts {
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
+async function callLovableAI(opts: GatewayOpts, prompt: string, userInput: unknown) {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
 
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const base = (opts.baseUrl || "https://ai.gateway.lovable.dev/v1").replace(/\/+$/, "");
+  const resp = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: model || "google/gemini-3-flash-preview",
+      model: opts.model || "google/gemini-3-flash-preview",
       messages: [
         { role: "system", content: prompt || "You are a helpful agent in a workflow." },
         { role: "user", content: typeof userInput === "string" ? userInput : JSON.stringify(userInput) },
       ],
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens,
     }),
   });
 
@@ -95,13 +111,22 @@ function pickEntry(nodes: FlowNode[]): string | null {
 async function executeNode(
   node: FlowNode,
   state: Record<string, unknown>,
+  gateway: Required<NonNullable<RunBody["gateway"]>>,
 ): Promise<{ label: string; output: unknown }> {
   const c = node.data.config ?? {};
   switch (node.data.kind) {
     case "trigger":
       return { label: "next", output: { source: c.source ?? "manual" } };
     case "llm": {
-      const out = await callLovableAI(c.model ?? "", c.prompt ?? "", state.last ?? state);
+      const tempOverride = parseFloat(c.temperature ?? "");
+      const tokOverride = parseInt(c.max_tokens ?? "", 10);
+      const opts: GatewayOpts = {
+        baseUrl: gateway.baseUrl,
+        model: c.model || gateway.defaultModel,
+        temperature: Number.isFinite(tempOverride) ? tempOverride : gateway.temperature,
+        maxTokens: Number.isFinite(tokOverride) && tokOverride > 0 ? tokOverride : gateway.maxTokens,
+      };
+      const out = await callLovableAI(opts, c.prompt ?? "", state.last ?? state);
       state.last = out;
       return { label: "on_success", output: out };
     }
@@ -140,6 +165,12 @@ async function runGraph(body: RunBody): Promise<{ logs: LogEntry[]; state: Recor
   const state: Record<string, unknown> = { ...(body.initialState ?? {}), last: null };
   const maxSteps = body.maxSteps ?? 32;
   const logs: LogEntry[] = [];
+  const gateway = {
+    baseUrl: body.gateway?.baseUrl ?? "https://ai.gateway.lovable.dev/v1",
+    defaultModel: body.gateway?.defaultModel ?? "google/gemini-3-flash-preview",
+    temperature: typeof body.gateway?.temperature === "number" ? body.gateway.temperature : 0.7,
+    maxTokens: typeof body.gateway?.maxTokens === "number" ? body.gateway.maxTokens : 1024,
+  };
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const out = new Map<string, FlowEdge[]>();
@@ -162,7 +193,7 @@ async function runGraph(body: RunBody): Promise<{ logs: LogEntry[]; state: Recor
     let output: unknown = null;
     let error: string | undefined;
     try {
-      const r = await executeNode(node, state);
+      const r = await executeNode(node, state, gateway);
       label = r.label;
       output = r.output;
     } catch (e) {
