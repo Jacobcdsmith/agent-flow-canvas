@@ -33,6 +33,10 @@ export function AgentNode({ data, selected }: NodeProps<ExtraData>) {
       style={{
         borderColor: selected ? "hsl(var(--edge-selected))" : "hsl(var(--ink))",
         borderWidth: selected ? 3 : 2,
+        background: "var(--gradient-node)",
+        boxShadow: selected
+          ? "0 0 0 1px hsl(var(--edge-selected) / 0.3)"
+          : "0 1px 0 hsl(var(--ink) / 0.05)",
       }}
     >
       {data.hasIssue && (

@@ -8,13 +8,19 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 40 20% 97%;
-    --foreground: 0 0% 12%;
-    --paper: 40 20% 97%;
-    --ink: 0 0% 12%;
-    --ink-soft: 0 0% 35%;
-    --ink-faint: 0 0% 65%;
-    --grid-line: 0 0% 88%;
+    --background: 205 60% 97%;
+    --foreground: 215 60% 14%;
+    --paper: 205 60% 97%;
+    --ink: 215 80% 22%;
+    --ink-soft: 215 50% 38%;
+    --ink-faint: 210 35% 65%;
+    --grid-line: 210 50% 85%;
+    --accent-cyan: 200 90% 45%;
+    --accent-deep: 220 85% 35%;
+    --gradient-paper: linear-gradient(180deg, hsl(200 70% 98%) 0%, hsl(210 60% 94%) 100%);
+    --gradient-header: linear-gradient(90deg, hsl(210 80% 96%) 0%, hsl(195 85% 92%) 50%, hsl(210 80% 96%) 100%);
+    --gradient-node: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(205 60% 96%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(200 90% 50%) 0%, hsl(220 85% 40%) 100%);
 
     --node-trigger: 145 40% 45%;
     --node-llm: 220 60% 50%;
@@ -25,7 +31,7 @@ All colors MUST be HSL.
     --node-human: 50 80% 45%;
     --node-sink: 0 0% 25%;
 
-    --edge-selected: 215 90% 55%;
+    --edge-selected: 200 95% 45%;
     --issue: 0 75% 55%;
 
     --card: 0 0% 100%;
