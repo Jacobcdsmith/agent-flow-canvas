@@ -14,6 +14,49 @@ export const DEFAULT_GATEWAY: GatewayConfig = {
   maxTokens: 1024,
 };
 
+export interface GatewayErrors {
+  baseUrl?: string;
+  defaultModel?: string;
+  temperature?: string;
+  maxTokens?: string;
+}
+
+export function validateGateway(c: GatewayConfig): GatewayErrors {
+  const errs: GatewayErrors = {};
+  // base URL: must be http(s) and parseable
+  const url = (c.baseUrl ?? "").trim();
+  if (!url) {
+    errs.baseUrl = "required";
+  } else {
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        errs.baseUrl = "must be http:// or https://";
+      } else if (url.endsWith("/")) {
+        errs.baseUrl = "must not end with '/'";
+      }
+    } catch {
+      errs.baseUrl = "invalid URL";
+    }
+  }
+  if (!c.defaultModel?.trim()) errs.defaultModel = "required";
+  if (typeof c.temperature !== "number" || Number.isNaN(c.temperature)) {
+    errs.temperature = "must be a number";
+  } else if (c.temperature < 0 || c.temperature > 2) {
+    errs.temperature = "must be between 0 and 2";
+  }
+  if (!Number.isFinite(c.maxTokens) || !Number.isInteger(c.maxTokens)) {
+    errs.maxTokens = "must be an integer";
+  } else if (c.maxTokens < 1) {
+    errs.maxTokens = "must be ≥ 1";
+  } else if (c.maxTokens > 32000) {
+    errs.maxTokens = "must be ≤ 32000";
+  }
+  return errs;
+}
+
+export const hasGatewayErrors = (e: GatewayErrors) => Object.keys(e).length > 0;
+
 const MODELS = [
   "google/gemini-3-flash-preview",
   "google/gemini-3.1-pro-preview",
@@ -35,6 +78,8 @@ interface Props {
 
 export function GatewaySettings({ config, onChange, onClose, onReset }: Props) {
   const [local, setLocal] = useState<GatewayConfig>(config);
+  const errors = validateGateway(local);
+  const invalid = hasGatewayErrors(errors);
 
   const apply = (patch: Partial<GatewayConfig>) => {
     const next = { ...local, ...patch };
@@ -75,8 +120,16 @@ export function GatewaySettings({ config, onChange, onClose, onReset }: Props) {
             <input
               value={local.baseUrl}
               onChange={(e) => apply({ baseUrl: e.target.value })}
-              className="mt-1 w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 text-[hsl(var(--ink))]"
+              aria-invalid={!!errors.baseUrl}
+              className={`mt-1 w-full bg-transparent border-b border-dashed outline-none py-1 text-[hsl(var(--ink))] ${
+                errors.baseUrl
+                  ? "border-[hsl(var(--issue))] focus:border-[hsl(var(--issue))]"
+                  : "border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))]"
+              }`}
             />
+            {errors.baseUrl && (
+              <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">⚠ {errors.baseUrl}</p>
+            )}
           </label>
 
           <label className="block">
@@ -100,8 +153,16 @@ export function GatewaySettings({ config, onChange, onClose, onReset }: Props) {
             <input
               value={local.defaultModel}
               onChange={(e) => apply({ defaultModel: e.target.value })}
-              className="mt-1 w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 text-[hsl(var(--ink))] text-[10px]"
+              aria-invalid={!!errors.defaultModel}
+              className={`mt-1 w-full bg-transparent border-b border-dashed outline-none py-1 text-[hsl(var(--ink))] text-[10px] ${
+                errors.defaultModel
+                  ? "border-[hsl(var(--issue))] focus:border-[hsl(var(--issue))]"
+                  : "border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))]"
+              }`}
             />
+            {errors.defaultModel && (
+              <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">⚠ {errors.defaultModel}</p>
+            )}
           </label>
 
           <label className="block">
@@ -120,6 +181,9 @@ export function GatewaySettings({ config, onChange, onClose, onReset }: Props) {
               onChange={(e) => apply({ temperature: parseFloat(e.target.value) })}
               className="mt-1 w-full accent-[hsl(var(--ink))]"
             />
+            {errors.temperature && (
+              <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">⚠ {errors.temperature}</p>
+            )}
           </label>
 
           <label className="block">
@@ -132,9 +196,31 @@ export function GatewaySettings({ config, onChange, onClose, onReset }: Props) {
               max={32000}
               value={local.maxTokens}
               onChange={(e) => apply({ maxTokens: parseInt(e.target.value || "0", 10) || 0 })}
-              className="mt-1 w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 text-[hsl(var(--ink))]"
+              aria-invalid={!!errors.maxTokens}
+              className={`mt-1 w-full bg-transparent border-b border-dashed outline-none py-1 text-[hsl(var(--ink))] ${
+                errors.maxTokens
+                  ? "border-[hsl(var(--issue))] focus:border-[hsl(var(--issue))]"
+                  : "border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))]"
+              }`}
             />
+            {errors.maxTokens && (
+              <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">⚠ {errors.maxTokens}</p>
+            )}
           </label>
+
+          {invalid && (
+            <div
+              className="border border-dashed p-2 text-[10px] leading-relaxed"
+              style={{
+                borderColor: "hsl(var(--issue))",
+                background: "hsl(var(--issue) / 0.08)",
+                color: "hsl(var(--issue))",
+              }}
+            >
+              <span className="uppercase tracking-[0.15em] font-semibold">⚠ invalid gateway</span>{" "}
+              — fix the fields above before running the flow.
+            </div>
+          )}
 
           <div
             className="border border-dashed border-[hsl(var(--grid-line))] p-2 text-[10px] text-[hsl(var(--ink-soft))] leading-relaxed"
