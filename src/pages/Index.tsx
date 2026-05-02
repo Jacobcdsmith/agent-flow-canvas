@@ -404,6 +404,15 @@ function Canvas() {
             validate
           </button>
           <button
+            onClick={runFlow}
+            disabled={running}
+            title="Execute flow via MCP gateway (routes LLM nodes through Lovable AI)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed text-[hsl(var(--paper))] disabled:opacity-50"
+            style={{ background: "var(--gradient-accent)", borderColor: "hsl(var(--accent-deep))" }}
+          >
+            {running ? "running…" : "▶ run"}
+          </button>
+          <button
             onClick={exportJSON}
             className="hidden sm:inline-flex font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
