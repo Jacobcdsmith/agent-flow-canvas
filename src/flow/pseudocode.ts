@@ -74,3 +74,52 @@ export function generatePseudocode(nodes: Node<AgentNodeData>[], edges: Edge[]):
 function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9_]/g, "_") || "node";
 }
+
+export function generateJsPseudocode(nodes: Node<AgentNodeData>[], edges: Edge[]): string {
+  if (nodes.length === 0) return "// empty graph";
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const lines: string[] = [];
+  lines.push("// auto-generated from canvas");
+  lines.push("import { Graph, llm, tools, memory, awaitHuman, emit, subgraph } from './agent-runtime';");
+  lines.push("");
+  lines.push("const graph = new Graph();");
+  lines.push("");
+  for (const n of nodes) {
+    const d = n.data;
+    const cfg = Object.entries(d.config)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+      .join(", ");
+    lines.push(`graph.node("${n.id}", { kind: "${d.kind}"${cfg ? ", " + cfg : ""} }, async (state) => {`);
+    lines.push(`  ${jsBody(d)}`);
+    lines.push(`});`);
+    lines.push("");
+  }
+  lines.push("// edges");
+  for (const e of edges) {
+    const src = byId.get(e.source)?.data.name ?? e.source;
+    const tgt = byId.get(e.target)?.data.name ?? e.target;
+    lines.push(`graph.connect(${JSON.stringify(src)}, ${JSON.stringify(tgt)}, { on: ${JSON.stringify(e.label ?? "next")} });`);
+  }
+  lines.push("");
+  const entry = nodes.find((n) => n.data.isEntry);
+  if (entry) lines.push(`graph.setEntry(${JSON.stringify(entry.data.name)});`);
+  lines.push("");
+  lines.push("graph.run({});");
+  return lines.join("\n");
+
+  function jsBody(d: AgentNodeData): string {
+    switch (d.kind) {
+      case "trigger": return `return state.bind(${JSON.stringify(d.config.schema || "input")});`;
+      case "llm": return `return await llm(${JSON.stringify(d.config.model || "gpt-5")}).complete(${JSON.stringify(d.config.prompt || "...")}, state);`;
+      case "tool": return `return await tools.${d.config.tool || "noop"}(${d.config.args || "state"});`;
+      case "router": return `return (${d.config.predicate || "true"}) ? "true" : "false";`;
+      case "subagent": return `return await subgraph(${JSON.stringify(d.config.graph || "sub")}).run(${d.config.input || "state"});`;
+      case "memory": return d.config.op === "write"
+        ? `await memory.write(${JSON.stringify(d.config.key || "key")}, state);`
+        : `state.memory = await memory.read(${JSON.stringify(d.config.key || "key")});`;
+      case "human": return `return await awaitHuman({ channel: ${JSON.stringify(d.config.channel || "ui")}, prompt: ${JSON.stringify(d.config.prompt || "")} });`;
+      case "sink": return `return emit(${JSON.stringify(d.config.target || "response")}, state);`;
+    }
+  }
+}
