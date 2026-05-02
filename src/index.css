@@ -126,3 +126,19 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* Lo-fi wireframe: enforce flat elevation across the canvas.
+   Elevation is communicated via border weight only, never shadow/glow. */
+@layer utilities {
+  .react-flow__node,
+  .react-flow__node *,
+  .react-flow__controls,
+  .react-flow__controls-button,
+  .react-flow__minimap,
+  .react-flow__attribution,
+  .react-flow__edge-path {
+    box-shadow: none !important;
+    filter: none !important;
+    -webkit-filter: none !important;
+  }
+}

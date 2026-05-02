@@ -134,7 +134,7 @@ export function SampleWalkthrough({ onClose, loadGraph, setHighlight, selectNode
 
   return (
     <div
-      className="fixed left-1/2 -translate-x-1/2 bottom-4 z-40 w-[calc(100%-2rem)] max-w-xl bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] shadow-lg"
+      className="fixed left-1/2 -translate-x-1/2 bottom-4 z-40 w-[calc(100%-2rem)] max-w-xl bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))]"
       style={{ background: "hsl(var(--paper))" }}
     >
       <div
