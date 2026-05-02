@@ -24,7 +24,7 @@ import { Palette } from "@/flow/Palette";
 import { Inspector } from "@/flow/Inspector";
 import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
-import { generatePseudocode, generateJsPseudocode } from "@/flow/pseudocode";
+import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -259,9 +259,14 @@ function Canvas() {
     [edges, selectedEdgeId],
   );
 
-  const pseudocode = useMemo(
-    () => (codeLang === "python" ? generatePseudocode(nodes, edges) : generateJsPseudocode(nodes, edges)),
+  const generated = useMemo(
+    () => generateCode(codeLang, nodes, edges),
     [nodes, edges, codeLang],
+  );
+  const pseudocode = generated.code;
+  const codeLintIssues = useMemo(
+    () => (codeLang === "python" ? lintPython(generated.code) : []),
+    [codeLang, generated.code],
   );
 
   // export / import
