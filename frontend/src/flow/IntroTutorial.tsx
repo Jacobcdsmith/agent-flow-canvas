@@ -3,11 +3,11 @@ import { useState } from "react";
 const STEPS: { title: string; body: string; bullets?: string[] }[] = [
   {
     title: "welcome to agent_flow.canvas",
-    body: "An open-source visual builder for Python AI agent workflows. Design graphs, generate runnable code, and execute through the built-in MCP gateway — all in one wireframe canvas.",
+    body: "Lightweight, browser-based, open-source visual builder for AI agent workflows. No download. No install. No login. Bring your own API keys for any LLM provider — they live only in your browser.",
     bullets: [
       "Drag-and-drop nodes for triggers, LLMs, tools, routers & memory",
       "Live Python + JavaScript code generation",
-      "Run flows directly through Lovable AI Gateway",
+      "Run flows directly in your tab — keys never leave the browser",
     ],
   },
   {
@@ -29,11 +29,11 @@ const STEPS: { title: string; body: string; bullets?: string[] }[] = [
     ],
   },
   {
-    title: "3 · run through the gateway",
-    body: "Press ▶ run to execute the live graph. LLM nodes route through the MCP gateway using your configured model, temperature, and max-tokens — globally or per-node.",
+    title: "3 · BYO key, run in browser",
+    body: "Open ⚙ gateways and add as many provider profiles as you like — OpenAI, Anthropic, Gemini, Ollama, or any OpenAI-compatible base URL. Each LLM node picks which gateway to use. Press ▶ run to execute end-to-end right here, no backend involved.",
     bullets: [
-      "Open ⚙ gateway to set base URL, default model, temperature, max tokens",
-      "Override per node by setting model / temperature / max_tokens in the Inspector",
+      "Keys are stored only in this browser — clear them with one click anytime",
+      "Per-node gateway override + per-node model / temperature / max_tokens",
       "Each step shows latency, output, and any errors",
     ],
   },
@@ -118,7 +118,7 @@ export function IntroTutorial({ onClose, onOpenGateway }: Props) {
                 }}
                 className="font-mono text-[10px] uppercase tracking-wider px-3 py-1.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
               >
-                open gateway
+                add gateway
               </button>
               <button
                 onClick={onClose}
