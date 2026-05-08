@@ -27,9 +27,16 @@ import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { supabase } from "@/integrations/supabase/client";
-import { GatewaySettings, DEFAULT_GATEWAY, type GatewayConfig } from "@/flow/GatewaySettings";
-import { validateGateway, hasGatewayErrors } from "@/flow/GatewaySettings";
+import {
+  Gateway,
+  clearAllKeys as clearAllGatewayKeys,
+  hasGatewayErrors,
+  loadGateways,
+  saveGateways,
+  validateGateway,
+} from "@/flow/gateways";
+import { GatewayManager } from "@/flow/GatewayManager";
+import { runFlow, RunLog } from "@/flow/runFlow";
 import { IntroTutorial } from "@/flow/IntroTutorial";
 import { SampleWalkthrough } from "@/flow/SampleWalkthrough";
 
@@ -53,34 +60,16 @@ function Canvas() {
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
 
-  // ---- MCP gateway run state ----
-  interface RunLog {
-    step: number;
-    nodeId: string;
-    name: string;
-    kind: string;
-    label: string;
-    output?: unknown;
-    error?: string;
-    ms: number;
-  }
+  // ---- Run state ----
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
 
-  // ---- Gateway settings + intro/tutorial ----
-  const [gateway, setGateway] = useState<GatewayConfig>(() => {
-    try {
-      const raw = localStorage.getItem("agent_flow.gateway");
-      if (raw) return { ...DEFAULT_GATEWAY, ...JSON.parse(raw) };
-    } catch {}
-    return DEFAULT_GATEWAY;
-  });
+  // ---- Gateways library + intro/tutorial ----
+  const [gateways, setGateways] = useState<Gateway[]>(() => loadGateways());
   useEffect(() => {
-    try {
-      localStorage.setItem("agent_flow.gateway", JSON.stringify(gateway));
-    } catch {}
-  }, [gateway]);
+    saveGateways(gateways);
+  }, [gateways]);
   const [showGateway, setShowGateway] = useState(false);
   const [showSample, setShowSample] = useState(false);
   const [highlight, setHighlight] = useState<{
@@ -89,8 +78,16 @@ function Canvas() {
     color: string;
   } | null>(null);
 
-  const gatewayErrors = useMemo(() => validateGateway(gateway), [gateway]);
-  const gatewayInvalid = hasGatewayErrors(gatewayErrors);
+  const gatewayIssues = useMemo(() => {
+    if (gateways.length === 0) return ["no gateway configured"];
+    return gateways.flatMap((g) => {
+      const errs = validateGateway(g);
+      return hasGatewayErrors(errs)
+        ? [`${g.name}: ${Object.values(errs).join(" · ")}`]
+        : [];
+    });
+  }, [gateways]);
+  const gatewayInvalid = gatewayIssues.length > 0;
 
   const [showIntro, setShowIntro] = useState(() => {
     try {
@@ -418,36 +415,46 @@ function Canvas() {
     else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
   }, [nodes, edges]);
 
-  const runFlow = useCallback(async () => {
+  const runFlowAction = useCallback(async () => {
     if (gatewayInvalid) {
-      const first = Object.values(gatewayErrors)[0];
+      const first = gatewayIssues[0];
       toast.error(`Gateway invalid — ${first}`);
       setShowGateway(true);
       return;
     }
     setRunning(true);
     setShowRun(true);
-    setRunLogs(null);
+    setRunLogs([]);
     try {
-      const payload = {
-        nodes: nodes.map((n) => ({ id: n.id, data: n.data })),
-        edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
+      const logs = await runFlow({
+        nodes,
+        edges,
+        gateways,
         initialState: { query: "hello world" },
-        gateway,
-      };
-      const { data, error } = await supabase.functions.invoke("flow-run", { body: payload });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error ?? "run failed");
-      setRunLogs(data.logs as RunLog[]);
-      toast.success(`Flow ran in ${data.logs.length} steps`);
+        onLog: (log) => setRunLogs((prev) => [...(prev ?? []), log]),
+      });
+      setRunLogs(logs);
+      const errored = logs.some((l) => l.error);
+      if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
+      else toast.success(`Flow ran in ${logs.length} steps`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
-      setRunLogs([]);
+      setRunLogs([
+        {
+          step: 0,
+          nodeId: "_error",
+          name: "runtime",
+          kind: "runtime",
+          label: "fatal",
+          error: msg,
+          ms: 0,
+        },
+      ]);
     } finally {
       setRunning(false);
     }
-  }, [nodes, edges, gateway, gatewayInvalid, gatewayErrors]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -493,8 +500,8 @@ function Canvas() {
             onClick={() => setShowGateway(true)}
             title={
               gatewayInvalid
-                ? `Gateway invalid: ${Object.values(gatewayErrors).join(" · ")}`
-                : "Configure MCP gateway (base URL, model, temperature, max tokens)"
+                ? `Gateways need attention: ${gatewayIssues.join(" · ")}`
+                : `${gateways.length} gateway${gateways.length === 1 ? "" : "s"} configured (BYO key, browser-only)`
             }
             className={`font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed transition-colors ${
               gatewayInvalid
@@ -502,7 +509,7 @@ function Canvas() {
                 : "border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
             }`}
           >
-            <span className="hidden sm:inline">⚙ gateway{gatewayInvalid ? " ⚠" : ""}</span>
+            <span className="hidden sm:inline">⚙ gateways{gatewayInvalid ? " ⚠" : ` · ${gateways.length}`}</span>
             <span className="sm:hidden">⚙{gatewayInvalid ? "⚠" : ""}</span>
           </button>
           <button
@@ -521,12 +528,12 @@ function Canvas() {
             ?
           </button>
           <button
-            onClick={runFlow}
+            onClick={runFlowAction}
             disabled={running || gatewayInvalid}
             title={
               gatewayInvalid
-                ? `Cannot run — fix gateway: ${Object.values(gatewayErrors).join(" · ")}`
-                : "Execute flow via MCP gateway (routes LLM nodes through Lovable AI)"
+                ? `Cannot run — fix gateways: ${gatewayIssues.join(" · ")}`
+                : "Execute flow in your browser — LLM nodes call your configured providers directly"
             }
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed text-[hsl(var(--paper))] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ background: "var(--gradient-accent)", borderColor: "hsl(var(--accent-deep))" }}
@@ -681,6 +688,7 @@ function Canvas() {
               node={selected}
               edges={edges}
               nodes={nodes}
+              gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
             />
@@ -764,7 +772,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} onChange={updateNode} onDelete={deleteNode} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} />
           </div>
         </div>
       )}
@@ -805,14 +813,14 @@ function Canvas() {
         <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-[440px] flex flex-col bg-[hsl(var(--paper))] border-l-2 border-[hsl(var(--ink))] animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">mcp gateway · run log</div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">browser run · log</div>
               <h2 className="font-mono text-sm font-semibold">
                 {running ? "executing flow…" : runLogs ? `${runLogs.length} step${runLogs.length === 1 ? "" : "s"}` : "ready"}
               </h2>
             </div>
             <div className="flex gap-1.5">
               <button
-                onClick={runFlow}
+                onClick={runFlowAction}
                 disabled={running}
                 className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-50"
               >
@@ -829,7 +837,7 @@ function Canvas() {
           <div className="flex-1 overflow-auto p-3 space-y-2">
             {running && (
               <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
-                routing through ai gateway…
+                executing in browser…
               </div>
             )}
             {runLogs && runLogs.length === 0 && !running && (
@@ -866,11 +874,14 @@ function Canvas() {
       )}
 
       {showGateway && (
-        <GatewaySettings
-          config={gateway}
-          onChange={setGateway}
+        <GatewayManager
+          gateways={gateways}
+          onChange={setGateways}
+          onClearAllKeys={() => {
+            setGateways((prev) => clearAllGatewayKeys(prev));
+            toast("All API keys cleared from this browser");
+          }}
           onClose={() => setShowGateway(false)}
-          onReset={() => setGateway(DEFAULT_GATEWAY)}
         />
       )}
 

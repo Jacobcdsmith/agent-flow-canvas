@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { Edge, Node } from "reactflow";
 import { AgentNodeData, NODE_TYPES } from "./types";
+import type { Gateway } from "./gateways";
 
 interface Props {
   node: Node<AgentNodeData> | null;
   edges: Edge[];
   nodes: Node<AgentNodeData>[];
+  gateways?: Gateway[];
   onChange: (id: string, data: Partial<AgentNodeData>) => void;
   onDelete: (id: string) => void;
 }
 
-export function Inspector({ node, edges, nodes, onChange, onDelete }: Props) {
+export function Inspector({ node, edges, nodes, gateways = [], onChange, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false);
 
   if (!node) {
@@ -24,6 +26,7 @@ export function Inspector({ node, edges, nodes, onChange, onDelete }: Props) {
   const outgoing = edges.filter((e) => e.source === node.id);
   const incoming = edges.filter((e) => e.target === node.id);
   const nameOf = (id: string) => nodes.find((n) => n.id === id)?.data.name ?? id;
+  const isLLM = node.data.kind === "llm";
 
   return (
     <div className="p-4 space-y-3 font-mono text-[11px]">
@@ -57,6 +60,32 @@ export function Inspector({ node, edges, nodes, onChange, onDelete }: Props) {
           />
         </label>
       ))}
+
+      {isLLM && (
+        <label className="block">
+          <span className="text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em]">
+            gateway
+          </span>
+          <select
+            value={node.data.gatewayId ?? ""}
+            onChange={(e) =>
+              onChange(node.id, { gatewayId: e.target.value || undefined })
+            }
+            className="mt-1 w-full bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1.5 px-2 text-[hsl(var(--ink))]"
+          >
+            <option value="">
+              {gateways.length === 0
+                ? "no gateway — open ⚙ gateways"
+                : `(default · ${gateways[0].name})`}
+            </option>
+            {gateways.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name} · {g.provider}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <div className="flex items-center gap-4 pt-1">
         <label className="flex items-center gap-2">

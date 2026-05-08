@@ -14,6 +14,8 @@ export interface AgentNodeData {
   config: Record<string, string>;
   isEntry?: boolean;
   isTerminal?: boolean;
+  /** Optional override: which gateway (provider profile) this LLM node uses */
+  gatewayId?: string;
 }
 
 export interface NodeTypeMeta {
