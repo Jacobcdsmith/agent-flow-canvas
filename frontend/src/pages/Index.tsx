@@ -64,6 +64,28 @@ function Canvas() {
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
+  const [initialStateStr, setInitialStateStr] = useState(() => {
+    return JSON.stringify({ query: "hello world" }, null, 2);
+  });
+  const [initialStateError, setInitialStateError] = useState<string | null>(null);
+  const [visualSpeed, setVisualSpeed] = useState<"fast" | "visualized">("visualized");
+
+  useEffect(() => {
+    try {
+      if (initialStateStr.trim()) {
+        const parsed = JSON.parse(initialStateStr);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          setInitialStateError("Initial state must be a JSON object");
+        } else {
+          setInitialStateError(null);
+        }
+      } else {
+        setInitialStateError(null);
+      }
+    } catch (e) {
+      setInitialStateError(e instanceof Error ? e.message : "Invalid JSON");
+    }
+  }, [initialStateStr]);
 
   // ---- Gateways library + intro/tutorial ----
   const [gateways, setGateways] = useState<Gateway[]>(() => loadGateways());
@@ -403,6 +425,74 @@ function Canvas() {
     }
   }, [snapshot]);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const downloadJSON = useCallback(() => {
+    const data = JSON.stringify(
+      {
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          position: n.position,
+          data: n.data,
+        })),
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: e.label,
+        })),
+      },
+      null,
+      2,
+    );
+    const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "agent_flow_workflow.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Workflow downloaded");
+  }, [nodes, edges]);
+
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result;
+        if (typeof text !== "string") return;
+        const parsed = JSON.parse(text);
+        if (!parsed.nodes || !parsed.edges) throw new Error("invalid shape");
+        snapshot();
+        setNodes(
+          parsed.nodes.map((n: any) => ({
+            id: n.id,
+            type: "agent",
+            position: n.position ?? { x: 0, y: 0 },
+            data: n.data,
+          })),
+        );
+        setEdges(
+          parsed.edges.map((e: any) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            label: e.label ?? "next",
+            type: "smoothstep",
+          })),
+        );
+        toast.success("Workflow file imported");
+      } catch (err) {
+        toast.error("Invalid JSON workflow file");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  }, [snapshot]);
+
   const runValidate = useCallback(() => {
     const found = validateGraph(nodes, edges);
     const py = generateCode("python", nodes, edges);
@@ -422,16 +512,42 @@ function Canvas() {
       setShowGateway(true);
       return;
     }
+
+    let parsedState = { query: "hello world" };
+    if (initialStateStr.trim()) {
+      try {
+        const parsed = JSON.parse(initialStateStr);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          parsedState = parsed;
+        } else {
+          toast.error("Initial state must be a JSON object. Using fallback.");
+        }
+      } catch (e) {
+        toast.error("Invalid JSON in Initial State. Using fallback.");
+      }
+    }
+
     setRunning(true);
     setShowRun(true);
     setRunLogs([]);
+    const stepDelay = visualSpeed === "visualized" ? 600 : 0;
     try {
       const logs = await runFlow({
         nodes,
         edges,
         gateways,
-        initialState: { query: "hello world" },
-        onLog: (log) => setRunLogs((prev) => [...(prev ?? []), log]),
+        initialState: parsedState,
+        stepDelay,
+        onLog: (log) => {
+          setRunLogs((prev) => [...(prev ?? []), log]);
+          if (log.nodeId && log.nodeId !== "_error" && log.nodeId !== "_runtime") {
+            setHighlight({
+              nodeIds: new Set([log.nodeId]),
+              edgeIds: new Set(),
+              color: log.error ? "hsl(var(--issue))" : "hsl(var(--node-llm))",
+            });
+          }
+        },
       });
       setRunLogs(logs);
       const errored = logs.some((l) => l.error);
@@ -453,6 +569,9 @@ function Canvas() {
       ]);
     } finally {
       setRunning(false);
+      setTimeout(() => {
+        setHighlight(null);
+      }, 1500);
     }
   }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues]);
 
@@ -540,17 +659,40 @@ function Canvas() {
           >
             {running ? "running…" : "▶ run"}
           </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".json"
+            className="hidden"
+          />
           <button
             onClick={exportJSON}
-            className="hidden sm:inline-flex font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            title="Copy workflow configuration JSON to clipboard"
+            className="hidden lg:inline-flex font-mono text-[11px] px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
-            export json
+            copy json
+          </button>
+          <button
+            onClick={downloadJSON}
+            title="Download workflow configuration as a .json file"
+            className="hidden sm:inline-flex font-mono text-[11px] px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            download file
           </button>
           <button
             onClick={importJSON}
-            className="hidden sm:inline-flex font-mono text-[11px] px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            title="Paste workflow configuration JSON from clipboard"
+            className="hidden lg:inline-flex font-mono text-[11px] px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
-            import json
+            paste json
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            title="Upload workflow configuration from a .json file"
+            className="hidden sm:inline-flex font-mono text-[11px] px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            upload file
           </button>
           <button
             onClick={() => setShowCode((v) => !v)}
@@ -738,6 +880,21 @@ function Canvas() {
                 >
                   copy
                 </button>
+                <button
+                  onClick={() => {
+                    const blob = new Blob([pseudocode], { type: "text/plain;charset=utf-8" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = codeLang === "python" ? "flow.py" : "flow.js";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast(`${codeLang === "python" ? "Python" : "JavaScript"} file downloaded`);
+                  }}
+                  className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                >
+                  download
+                </button>
               </div>
               <pre className="flex-1 overflow-auto p-4 font-mono text-[11px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
 {pseudocode}
@@ -799,6 +956,17 @@ function Canvas() {
             </div>
             <button onClick={() => { navigator.clipboard.writeText(pseudocode); toast(`${codeLang} copied`); }}
               className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))]">copy</button>
+            <button onClick={() => {
+              const blob = new Blob([pseudocode], { type: "text/plain;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = codeLang === "python" ? "flow.py" : "flow.js";
+              a.click();
+              URL.revokeObjectURL(url);
+              toast(`${codeLang === "python" ? "Python" : "JavaScript"} file downloaded`);
+            }}
+              className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))]">download</button>
             <button onClick={exportJSON} className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] ml-auto">export</button>
             <button onClick={importJSON} className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))]">import</button>
           </div>
@@ -827,7 +995,10 @@ function Canvas() {
                 rerun
               </button>
               <button
-                onClick={() => setShowRun(false)}
+                onClick={() => {
+                  setShowRun(false);
+                  setHighlight(null);
+                }}
                 className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]"
               >
                 close
@@ -835,6 +1006,76 @@ function Canvas() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
+            {/* Initial State Editor */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                  initial state (json)
+                </span>
+                {initialStateError ? (
+                  <span className="font-mono text-[9px] text-[hsl(var(--issue))] uppercase tracking-wider font-semibold">
+                    ⚠ invalid json
+                  </span>
+                ) : (
+                  <span className="font-mono text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">
+                    ✓ valid
+                  </span>
+                )}
+              </div>
+              <textarea
+                value={initialStateStr}
+                onChange={(e) => setInitialStateStr(e.target.value)}
+                disabled={running}
+                rows={4}
+                className={`w-full font-mono text-[10px] p-2 bg-transparent border border-dashed outline-none resize-y ${
+                  initialStateError
+                    ? "border-[hsl(var(--issue))] text-[hsl(var(--issue))]"
+                    : "border-[hsl(var(--grid-line))] focus:border-[hsl(var(--ink))]"
+                }`}
+                placeholder='{ "query": "hello world" }'
+              />
+              {initialStateError && (
+                <div className="font-mono text-[9px] text-[hsl(var(--issue))] leading-normal">
+                  {initialStateError}
+                </div>
+              )}
+            </div>
+
+            {/* Visual Speed Selector */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold block">
+                visual execution speed
+              </span>
+              <div className="flex border border-dashed border-[hsl(var(--ink))]">
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => setVisualSpeed("visualized")}
+                  className="flex-1 font-mono text-[10px] uppercase tracking-wider px-2 py-1.5 transition-colors"
+                  style={
+                    visualSpeed === "visualized"
+                      ? { background: "var(--gradient-accent)", color: "hsl(var(--paper))" }
+                      : { color: "hsl(var(--ink))" }
+                  }
+                >
+                  Visualized (600ms)
+                </button>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => setVisualSpeed("fast")}
+                  className="flex-1 font-mono text-[10px] uppercase tracking-wider px-2 py-1.5 transition-colors"
+                  style={
+                    visualSpeed === "fast"
+                      ? { background: "var(--gradient-accent)", color: "hsl(var(--paper))" }
+                      : { color: "hsl(var(--ink))" }
+                  }
+                >
+                  Full Speed (Instant)
+                </button>
+              </div>
+            </div>
+
             {running && (
               <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
                 executing in browser…

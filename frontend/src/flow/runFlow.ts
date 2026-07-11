@@ -21,6 +21,7 @@ export interface RunOptions {
   initialState?: Record<string, unknown>;
   maxSteps?: number;
   onLog?: (log: RunLog) => void;
+  stepDelay?: number;
 }
 
 function interpolate(template: string, state: Record<string, unknown>): string {
@@ -123,6 +124,10 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     };
     logs.push(log);
     onLog?.(log);
+
+    if (opts.stepDelay && opts.stepDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, opts.stepDelay));
+    }
 
     if (current.data.isTerminal || current.data.kind === "sink") break;
 
