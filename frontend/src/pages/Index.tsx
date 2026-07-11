@@ -427,6 +427,10 @@ function Canvas() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Package and download the current workflow's nodes and edges
+   * as a serialized JSON file on the local file system.
+   */
   const downloadJSON = useCallback(() => {
     const data = JSON.stringify(
       {
@@ -455,6 +459,12 @@ function Canvas() {
     toast("Workflow downloaded");
   }, [nodes, edges]);
 
+  /**
+   * Handle the local workspace JSON file upload event, parsing the contents
+   * and updating the current workflow's nodes and edges on success.
+   *
+   * @param e The change event from the hidden HTML file input element.
+   */
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
