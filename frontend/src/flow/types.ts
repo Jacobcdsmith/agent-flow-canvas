@@ -6,7 +6,9 @@ export type AgentNodeKind =
   | "subagent"
   | "memory"
   | "human"
-  | "sink";
+  | "sink"
+  | "http"
+  | "script";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -110,6 +112,27 @@ export const NODE_TYPES: NodeTypeMeta[] = [
       { key: "target", label: "target", placeholder: "response | db | webhook" },
     ],
     isTerminal: true,
+  },
+  {
+    kind: "http",
+    label: "HTTP Request",
+    description: "Execute a client-side HTTP/HTTPS web request with custom config.",
+    defaultName: "web_request",
+    configFields: [
+      { key: "method", label: "method", placeholder: "GET | POST | PUT | DELETE" },
+      { key: "url", label: "url", placeholder: "https://api.example.com/v1/data" },
+      { key: "headers", label: "headers (json)", placeholder: '{"Authorization": "Bearer token"}' },
+      { key: "body", label: "body", placeholder: '{"query": "{{state.query}}"}' },
+    ],
+  },
+  {
+    kind: "script",
+    label: "JS Script",
+    description: "Execute custom sandboxed JavaScript to modify state or compute labels.",
+    defaultName: "js_code",
+    configFields: [
+      { key: "code", label: "code", placeholder: "state.processed = true;\nreturn 'on_success';" },
+    ],
   },
 ];
 

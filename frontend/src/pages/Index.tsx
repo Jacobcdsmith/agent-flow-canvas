@@ -45,6 +45,49 @@ const nodeTypes = { agent: AgentNode };
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
 
+function LogItem({ l }: { l: RunLog }) {
+  const [isStateOpen, setIsStateOpen] = useState(false);
+  return (
+    <div
+      className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
+      style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
+        <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
+        <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
+        <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
+      </div>
+      <div className="text-[hsl(var(--ink-soft))]">
+        → <span className="uppercase tracking-wider">{l.label}</span>
+      </div>
+      {l.error ? (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
+      ) : (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+{typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
+        </pre>
+      )}
+      {l.stateSnapshot && (
+        <div className="mt-2 pt-2 border-t border-dashed border-[hsl(var(--grid-line))]">
+          <button
+            type="button"
+            onClick={() => setIsStateOpen(!isStateOpen)}
+            className="text-[9px] uppercase tracking-wider text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] font-semibold"
+          >
+            {isStateOpen ? "▼ hide cumulative state" : "▶ show cumulative state"}
+          </button>
+          {isStateOpen && (
+            <pre className="mt-1.5 p-1.5 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-32 text-[9px] text-[hsl(var(--ink-soft))]">
+              {JSON.stringify(l.stateSnapshot, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
@@ -1097,28 +1140,7 @@ function Canvas() {
               </div>
             )}
             {runLogs?.map((l) => (
-              <div
-                key={`${l.step}-${l.nodeId}`}
-                className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
-                style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
-                  <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
-                  <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
-                  <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
-                </div>
-                <div className="text-[hsl(var(--ink-soft))]">
-                  → <span className="uppercase tracking-wider">{l.label}</span>
-                </div>
-                {l.error ? (
-                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
-                ) : (
-                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
-{typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
-                  </pre>
-                )}
-              </div>
+              <LogItem key={`${l.step}-${l.nodeId}`} l={l} />
             ))}
           </div>
         </div>
