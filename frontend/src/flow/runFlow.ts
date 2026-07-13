@@ -21,8 +21,17 @@ export interface RunOptions {
   initialState?: Record<string, unknown>;
   maxSteps?: number;
   onLog?: (log: RunLog) => void;
+  stepDelay?: number;
 }
 
+/**
+ * Interpolates state variables and parameters inside double-curly braces (e.g., {{state.value}})
+ * in a template string. Falls back to empty string if a path is undefined.
+ *
+ * @param template The raw template string containing placeholders.
+ * @param state The workflow execution state object.
+ * @returns The fully interpolated template string.
+ */
 function interpolate(template: string, state: Record<string, unknown>): string {
   if (!template) return "";
   return template
@@ -33,6 +42,13 @@ function interpolate(template: string, state: Record<string, unknown>): string {
     .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""));
 }
 
+/**
+ * Traverses a nested object hierarchy to retrieve the value at a dot-separated path.
+ *
+ * @param obj The source object to query.
+ * @param path The dot-separated property path.
+ * @returns The value at the specified path, or undefined if any part of the path is missing.
+ */
 function getPath(obj: Record<string, unknown>, path: string): unknown {
   return path.split(".").reduce<unknown>((acc, p) => {
     if (acc && typeof acc === "object" && p in (acc as Record<string, unknown>)) {
@@ -42,6 +58,16 @@ function getPath(obj: Record<string, unknown>, path: string): unknown {
   }, obj);
 }
 
+/**
+ * Evaluates the output state of the current node to select the matching outgoing edge.
+ * Prioritizes on_error edges if an error occurred, router conditions, tool_results,
+ * and falls back sequentially to "next", "on_success", or the first outgoing edge.
+ *
+ * @param outgoing The list of outgoing edges from the active node.
+ * @param state The current execution state.
+ * @param errored A boolean indicating whether node execution threw an error.
+ * @returns The selected Edge, or null if no outgoing edge matches the current condition.
+ */
 function pickNextEdge(
   outgoing: Edge[],
   state: Record<string, unknown>,
@@ -71,6 +97,13 @@ function pickNextEdge(
   );
 }
 
+/**
+ * Core engine function that executes an agent flow graph in-browser sequentially,
+ * handling state modifications, node routing logic, and visualization delays.
+ *
+ * @param opts Configuration options including the nodes list, edges list, gateway configuration, and step delay.
+ * @returns A promise resolving to an array of step-by-step RunLogs.
+ */
 export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
   const { nodes, edges, gateways, onLog } = opts;
   const maxSteps = opts.maxSteps ?? 30;
@@ -124,6 +157,10 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     logs.push(log);
     onLog?.(log);
 
+    if (opts.stepDelay && opts.stepDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, opts.stepDelay));
+    }
+
     if (current.data.isTerminal || current.data.kind === "sink") break;
 
     const outs = outBy.get(current.id) ?? [];
@@ -147,6 +184,15 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
   return logs;
 }
 
+/**
+ * Processes and executes an individual node's operational logic based on its kind,
+ * such as compiling templates, querying gateway LLMs, or updating memory stores.
+ *
+ * @param node The specific node metadata and config to run.
+ * @param state The current execution state, which may be read or updated.
+ * @param gateways The list of user-configured gateway profiles.
+ * @returns A promise resolving to the output payload produced by the node.
+ */
 async function runNode(
   node: Node<AgentNodeData>,
   state: Record<string, unknown>,
@@ -239,6 +285,14 @@ async function runNode(
   }
 }
 
+/**
+ * Resolves which Gateway profile should be utilized by an LLM node, taking into
+ * account node-level gateway configuration overrides or default fallbacks.
+ *
+ * @param node The LLM node to pick a gateway for.
+ * @param gateways The array of all configured gateway profiles.
+ * @returns The selected Gateway configuration, or null if no gateways exist.
+ */
 function pickGateway(node: Node<AgentNodeData>, gateways: Gateway[]): Gateway | null {
   if (gateways.length === 0) return null;
   const id = node.data.gatewayId;
@@ -249,11 +303,26 @@ function pickGateway(node: Node<AgentNodeData>, gateways: Gateway[]): Gateway | 
   return gateways[0]; // fall back to first gateway as default
 }
 
+/**
+ * Parses a numeric float value from a string, falling back to a default value if invalid.
+ *
+ * @param v The raw string value.
+ * @param fallback The default number if parsing fails.
+ * @returns The parsed float value.
+ */
 function parseFloatOr(v: string | undefined, fallback: number): number {
   if (!v || !v.trim()) return fallback;
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : fallback;
 }
+
+/**
+ * Parses an integer value from a string, falling back to a default value if invalid.
+ *
+ * @param v The raw string value.
+ * @param fallback The default integer if parsing fails.
+ * @returns The parsed integer value.
+ */
 function parseIntOr(v: string | undefined, fallback: number): number {
   if (!v || !v.trim()) return fallback;
   const n = parseInt(v, 10);
