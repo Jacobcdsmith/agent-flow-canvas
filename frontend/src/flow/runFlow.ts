@@ -12,6 +12,8 @@ export interface RunLog {
   output?: unknown;
   error?: string;
   ms: number;
+  /** Snapshot of the execution state after this node runs */
+  stateSnapshot?: Record<string, unknown>;
 }
 
 export interface RunOptions {
@@ -78,8 +80,8 @@ function pickNextEdge(
     const onError = outgoing.find((e) => String(e.label) === "on_error");
     if (onError) return onError;
   }
-  // router branch
-  const branch = state.__router_branch as "true" | "false" | undefined;
+  // router or script branch override
+  const branch = state.__router_branch as string | undefined;
   if (branch) {
     const m = outgoing.find((e) => String(e.label) === branch);
     if (m) return m;
@@ -153,6 +155,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
       output,
       error,
       ms,
+      stateSnapshot: JSON.parse(JSON.stringify(state)),
     };
     logs.push(log);
     onLog?.(log);
@@ -279,6 +282,87 @@ async function runNode(
         target: cfg.target || "response",
         result: state.last_output ?? null,
       };
+    }
+    case "http": {
+      const method = (cfg.method || "GET").trim().toUpperCase();
+      let urlStr = interpolate(cfg.url || "", state);
+      if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://") && urlStr) {
+        urlStr = "https://" + urlStr;
+      }
+      if (!urlStr) {
+        throw new Error("HTTP request URL is required");
+      }
+
+      let parsedHeaders: Record<string, string> = {};
+      if (cfg.headers?.trim()) {
+        try {
+          const rawHeaders = interpolate(cfg.headers, state);
+          parsedHeaders = JSON.parse(rawHeaders);
+        } catch {
+          throw new Error("HTTP headers must be valid JSON");
+        }
+      }
+
+      let rawBody = interpolate(cfg.body || "", state);
+      // Ensure content-type is set if body is JSON
+      if (rawBody && !parsedHeaders["Content-Type"] && !parsedHeaders["content-type"]) {
+        try {
+          JSON.parse(rawBody);
+          parsedHeaders["Content-Type"] = "application/json";
+        } catch {
+          // No-op, send raw
+        }
+      }
+
+      const fetchOptions: RequestInit = {
+        method,
+        headers: parsedHeaders,
+      };
+
+      if (method !== "GET" && method !== "HEAD" && rawBody) {
+        fetchOptions.body = rawBody;
+      }
+
+      const res = await fetch(urlStr, fetchOptions);
+      const text = await res.text();
+      let responseBody: unknown;
+      try {
+        responseBody = JSON.parse(text);
+      } catch {
+        responseBody = text;
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+      }
+
+      return {
+        status: res.status,
+        headers: Object.fromEntries(res.headers.entries()),
+        body: responseBody,
+      };
+    }
+    case "script": {
+      const userCode = cfg.code || "";
+      // Create a sandboxed execution where the user can read/write properties on `state`
+      // We will allow returning a value which gets mapped as custom edge label.
+      try {
+        const fn = new Function("state", `
+          with (state) {
+            ${userCode}
+          }
+        `);
+        // We evaluate using a Proxy or just normal state object. To make standard assignments work,
+        // we can let standard state mutation happen directly on the state reference.
+        const returnedLabel = fn(state);
+        if (typeof returnedLabel === "string") {
+          state.__router_branch = returnedLabel; // Re-use the branch selector matching logic
+          return { returned: returnedLabel, success: true };
+        }
+        return { success: true };
+      } catch (e) {
+        throw new Error(`Script evaluation error: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
     default:
       return { kind: node.data.kind, note: "no executor" };

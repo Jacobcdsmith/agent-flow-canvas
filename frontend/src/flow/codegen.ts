@@ -207,6 +207,37 @@ export function generatePython(
   lines.push(`    print(json.dumps(payload, default=str, indent=2))`);
   lines.push(`    return payload`);
   lines.push(``);
+  lines.push(`async def make_http_request(method: str, url: str, headers_json: str, body_str: str, state: State) -> Any:`);
+  lines.push(`    import urllib.request`);
+  lines.push(`    import urllib.error`);
+  lines.push(`    log.info("HTTP %s %s", method, url)`);
+  lines.push(`    headers = {}`);
+  lines.push(`    if headers_json:`);
+  lines.push(`        try:`);
+  lines.push(`            headers = json.loads(headers_json)`);
+  lines.push(`        except Exception:`);
+  lines.push(`            pass`);
+  lines.push(`    req_data = None`);
+  lines.push(`    if body_str:`);
+  lines.push(`        req_data = body_str.encode("utf-8")`);
+  lines.push(`        if "Content-Type" not in headers and "content-type" not in headers:`);
+  lines.push(`            headers["Content-Type"] = "application/json"`);
+  lines.push(`    req = urllib.request.Request(url, data=req_data, headers=headers, method=method)`);
+  lines.push(`    try:`);
+  lines.push(`        with urllib.request.urlopen(req) as response:`);
+  lines.push(`            status = response.status`);
+  lines.push(`            resp_body = response.read().decode("utf-8")`);
+  lines.push(`            try:`);
+  lines.push(`                resp_body = json.loads(resp_body)`);
+  lines.push(`            except Exception:`);
+  lines.push(`                pass`);
+  lines.push(`            return {"status": status, "body": resp_body}`);
+  lines.push(`    except urllib.error.HTTPError as err:`);
+  lines.push(`        err_body = err.read().decode("utf-8")`);
+  lines.push(`        raise RuntimeError(f"HTTP {err.code}: {err_body}")`);
+  lines.push(`    except Exception as exc:`);
+  lines.push(`        raise RuntimeError(f"HTTP request failed: {exc}")`);
+  lines.push(``);
   lines.push(``);
   lines.push(`# ---------------------------------------------------------------`);
   lines.push(`# Graph definition (generated)`);
@@ -309,6 +340,25 @@ export function generatePython(
           `await emit_output(${pyStr(c.target || "response")}, state)`,
           `return "next"`,
         ].join("\n");
+      case "http":
+        return [
+          `# HTTP Request`,
+          `method = ${pyStr(c.method || "GET")}`,
+          `url = ${pyStr(c.url || "")}`,
+          `headers_json = ${pyStr(c.headers || "")}`,
+          `body = ${pyStr(c.body || "")}`,
+          `result = await make_http_request(method, url, headers_json, body, state)`,
+          `state.last = result`,
+          `return "on_success"`,
+        ].join("\n");
+      case "script":
+        return [
+          `# JS Script Node (Simulated execution block)`,
+          `# Original Code:`,
+          ...((c.code || "").split("\n").map((line) => `#   ${line}`)),
+          `# Setting execution stub outputs`,
+          `return "next"`,
+        ].join("\n");
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -342,6 +392,24 @@ export function generateJavaScript(
   lines.push(`  get(k, d = null) { return this.data[k] ?? d; }`);
   lines.push(`}`);
   lines.push(``);
+  lines.push(`// adapters — swap with real SDKs`);
+  lines.push(`const makeHttpRequest = async (method, url, headersJson, body, state) => {`);
+  lines.push(`  const headers = headersJson ? JSON.parse(headersJson) : {};`);
+  lines.push(`  if (body && !headers["Content-Type"] && !headers["content-type"]) {`);
+  lines.push(`    headers["Content-Type"] = "application/json";`);
+  lines.push(`  }`);
+  lines.push(`  const opts = { method, headers };`);
+  lines.push(`  if (method !== "GET" && method !== "HEAD" && body) {`);
+  lines.push(`    opts.body = body;`);
+  lines.push(`  }`);
+  lines.push(`  const res = await fetch(url, opts);`);
+  lines.push(`  const text = await res.text();`);
+  lines.push(`  let respBody;`);
+  lines.push(`  try { respBody = JSON.parse(text); } catch { respBody = text; }`);
+  lines.push(`  if (!res.ok) throw new Error(\`HTTP \${res.status}: \${text.slice(0, 100)}\`);`);
+  lines.push(`  return { status: res.status, body: respBody };`);
+  lines.push(`};`);
+  lines.push(``);
   lines.push(`class Graph {`);
   lines.push(`  constructor() { this.nodes = new Map(); this.edges = new Map(); this.entry = null; }`);
   lines.push(`  node(name, fn) { this.nodes.set(name, fn); if (!this.edges.has(name)) this.edges.set(name, []); }`);
@@ -370,7 +438,6 @@ export function generateJavaScript(
   lines.push(`  }`);
   lines.push(`}`);
   lines.push(``);
-  lines.push(`// adapters — swap with real SDKs`);
   lines.push(`const callLlm = async (model, prompt) => \`[\${model}] \${prompt.slice(0, 40)}…\`;`);
   lines.push(`const callTool = async (tool, args) => ({ tool, ok: true, args });`);
   lines.push(`const memoryRead = async (key, state) => state.get(\`mem::\${key}\`);`);
@@ -423,6 +490,10 @@ export function generateJavaScript(
         return `state.last = await awaitHuman(${JSON.stringify(c.channel || "ui")}, ${JSON.stringify(c.prompt || "")});\nreturn "next";`;
       case "sink":
         return `await emitOutput(${JSON.stringify(c.target || "response")}, state);\nreturn "next";`;
+      case "http":
+        return `const method = ${JSON.stringify(c.method || "GET")};\nconst url = ${JSON.stringify(c.url || "")};\nconst headers = ${JSON.stringify(c.headers || "")};\nconst body = ${JSON.stringify(c.body || "")};\nstate.last = await makeHttpRequest(method, url, headers, body, state);\nreturn "on_success";`;
+      case "script":
+        return `// JS Script Node Execution\n${c.code || ""}\nreturn "next";`;
       default:
         return `return "next";`;
     }
@@ -466,4 +537,4 @@ export function generateCode(lang: CodeLanguage, nodes: Node<AgentNodeData>[], e
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script"];
