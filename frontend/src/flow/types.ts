@@ -6,7 +6,9 @@ export type AgentNodeKind =
   | "subagent"
   | "memory"
   | "human"
-  | "sink";
+  | "sink"
+  | "http"
+  | "script";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -23,7 +25,13 @@ export interface NodeTypeMeta {
   label: string;
   description: string;
   defaultName: string;
-  configFields: { key: string; label: string; placeholder: string }[];
+  configFields: {
+    key: string;
+    label: string;
+    placeholder: string;
+    type?: "input" | "textarea" | "select";
+    options?: string[];
+  }[];
   isEntry?: boolean;
   isTerminal?: boolean;
 }
@@ -47,7 +55,7 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     defaultName: "reason",
     configFields: [
       { key: "model", label: "model", placeholder: "gpt-5 | claude-4" },
-      { key: "prompt", label: "prompt", placeholder: "You are a helpful agent…" },
+      { key: "prompt", label: "prompt", placeholder: "You are a helpful agent…", type: "textarea" },
       { key: "temperature", label: "temperature", placeholder: "(global)  e.g. 0.7" },
       { key: "max_tokens", label: "max_tokens", placeholder: "(global)  e.g. 1024" },
     ],
@@ -110,6 +118,27 @@ export const NODE_TYPES: NodeTypeMeta[] = [
       { key: "target", label: "target", placeholder: "response | db | webhook" },
     ],
     isTerminal: true,
+  },
+  {
+    kind: "http",
+    label: "HTTP Request",
+    description: "Makes a live client-side HTTP request and returns the response.",
+    defaultName: "http_request",
+    configFields: [
+      { key: "url", label: "url", placeholder: "https://api.github.com/users/{{state.username}}" },
+      { key: "method", label: "method", placeholder: "GET", type: "select", options: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] },
+      { key: "headers", label: "headers", placeholder: '{"Content-Type": "application/json"}', type: "textarea" },
+      { key: "body", label: "body", placeholder: '{"query": "{{state.query}}"}', type: "textarea" },
+    ],
+  },
+  {
+    kind: "script",
+    label: "JS Script",
+    description: "Executes custom sandboxed JavaScript code against execution state.",
+    defaultName: "js_script",
+    configFields: [
+      { key: "code", label: "code", placeholder: "state.query = state.query.toUpperCase();\nreturn state;", type: "textarea" },
+    ],
   },
 ];
 

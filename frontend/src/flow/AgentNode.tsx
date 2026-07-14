@@ -11,6 +11,8 @@ const KIND_COLOR: Record<string, string> = {
   memory: "hsl(var(--node-memory))",
   human: "hsl(var(--node-human))",
   sink: "hsl(var(--node-sink))",
+  http: "hsl(var(--node-http))",
+  script: "hsl(var(--node-script))",
 };
 
 interface ExtraData extends AgentNodeData {

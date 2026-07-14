@@ -274,6 +274,71 @@ async function runNode(
         decision: "auto-approved (schematic)",
       };
     }
+    case "http": {
+      const url = interpolate(cfg.url || "", state);
+      if (!url) throw new Error("HTTP node requires a URL");
+
+      const method = (cfg.method || "GET").toUpperCase();
+
+      let headers: Record<string, string> = {};
+      const rawHeaders = cfg.headers || "";
+      if (rawHeaders.trim()) {
+        try {
+          const interpolatedHeaders = interpolate(rawHeaders, state);
+          headers = JSON.parse(interpolatedHeaders);
+        } catch (e) {
+          throw new Error(`Failed to parse HTTP headers JSON: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      let body: string | undefined;
+      const rawBody = cfg.body || "";
+      if (rawBody.trim() && method !== "GET" && method !== "HEAD") {
+        body = interpolate(rawBody, state);
+      }
+
+      const fetchOptions: RequestInit = {
+        method,
+        headers,
+      };
+      if (body !== undefined) {
+        fetchOptions.body = body;
+      }
+
+      const res = await fetch(url, fetchOptions);
+      const contentType = res.headers.get("content-type") || "";
+      let responseData: unknown;
+      if (contentType.includes("application/json")) {
+        responseData = await res.json();
+      } else {
+        responseData = await res.text();
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP Error ${res.status}: ${typeof responseData === "string" ? responseData : JSON.stringify(responseData)}`);
+      }
+
+      return {
+        status: res.status,
+        statusText: res.statusText,
+        data: responseData,
+      };
+    }
+    case "script": {
+      const code = cfg.code || "";
+      if (!code.trim()) {
+        return { note: "Empty script execution" };
+      }
+      try {
+        // Runs custom javascript block with state in scope
+        // eslint-disable-next-line no-new-func
+        const fn = new Function("state", `${code}`);
+        const result = fn(state);
+        return result !== undefined ? result : { executed: true, note: "Script executed successfully" };
+      } catch (e) {
+        throw new Error(`Script execution failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     case "sink": {
       return {
         target: cfg.target || "response",
