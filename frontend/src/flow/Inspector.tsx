@@ -48,16 +48,49 @@ export function Inspector({ node, edges, nodes, gateways = [], onChange, onDelet
       {meta.configFields.map((f) => (
         <label key={f.key} className="block">
           <span className="text-[10px] text-[hsl(var(--ink-faint))]">{f.label}</span>
-          <input
-            value={node.data.config?.[f.key] ?? ""}
-            placeholder={f.placeholder}
-            onChange={(e) =>
-              onChange(node.id, {
-                config: { ...node.data.config, [f.key]: e.target.value },
-              })
-            }
-            className="mt-1 w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))]"
-          />
+          {f.type === "textarea" ? (
+            <textarea
+              value={node.data.config?.[f.key] ?? ""}
+              placeholder={f.placeholder}
+              rows={4}
+              onChange={(e) =>
+                onChange(node.id, {
+                  config: { ...node.data.config, [f.key]: e.target.value },
+                })
+              }
+              className="mt-1 w-full bg-transparent border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none p-1.5 font-mono text-[11px] text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))] resize-y"
+            />
+          ) : f.type === "select" ? (
+            <select
+              value={node.data.config?.[f.key] ?? ""}
+              onChange={(e) =>
+                onChange(node.id, {
+                  config: { ...node.data.config, [f.key]: e.target.value },
+                })
+              }
+              className="mt-1 w-full bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1.5 px-2 text-[hsl(var(--ink))]"
+            >
+              <option value="" disabled>
+                -- select {f.label} --
+              </option>
+              {(f.options ?? []).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={node.data.config?.[f.key] ?? ""}
+              placeholder={f.placeholder}
+              onChange={(e) =>
+                onChange(node.id, {
+                  config: { ...node.data.config, [f.key]: e.target.value },
+                })
+              }
+              className="mt-1 w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))]"
+            />
+          )}
         </label>
       ))}
 

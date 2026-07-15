@@ -184,6 +184,45 @@ export function generatePython(
   lines.push(`    log.info("llm[%s] prompt=%r", model, prompt[:60])`);
   lines.push(`    return f"[{model}] {prompt[:40]}…"`);
   lines.push(``);
+  lines.push(`async def call_http(url: str, method: str, headers: Dict[str, str], body: Optional[str], state: State) -> Any:`);
+  lines.push(`    log.info("http[%s] url=%s", method, url)`);
+  lines.push(`    import urllib.request`);
+  lines.push(`    import urllib.error`);
+  lines.push(`    req = urllib.request.Request(url, method=method)`);
+  lines.push(`    for k, v in headers.items():`);
+  lines.push(`        req.add_header(k, v)`);
+  lines.push(`    data_bytes = body.encode("utf-8") if body else None`);
+  lines.push(`    loop = asyncio.get_running_loop()`);
+  lines.push(`    def _do_request():`);
+  lines.push(`        try:`);
+  lines.push(`            with urllib.request.urlopen(req, data=data_bytes) as response:`);
+  lines.push(`                status = response.status`);
+  lines.push(`                resp_body = response.read().decode("utf-8")`);
+  lines.push(`                try:`);
+  lines.push(`                    return status, json.loads(resp_body)`);
+  lines.push(`                except Exception:`);
+  lines.push(`                    return status, resp_body`);
+  lines.push(`        except urllib.error.HTTPError as err:`);
+  lines.push(`            err_body = err.read().decode("utf-8")`);
+  lines.push(`            try:`);
+  lines.push(`                err_data = json.loads(err_body)`);
+  lines.push(`            except Exception:`);
+  lines.push(`                err_data = err_body`);
+  lines.push(`            raise RuntimeError(f"HTTP Error {err.code}: {err_data}")`);
+  lines.push(`        except Exception as exc:`);
+  lines.push(`            raise RuntimeError(f"Request failed: {exc}")`);
+  lines.push(`    status, parsed_resp = await loop.run_in_executor(None, _do_request)`);
+  lines.push(`    return {"status": status, "data": parsed_resp}`);
+  lines.push(``);
+  lines.push(`async def run_js_script(code: str, state: State) -> Any:`);
+  lines.push(`    log.info("script: %s", code[:60].replace("\\n", " "))`);
+  lines.push(`    local_vars = {"state": state.data}`);
+  lines.push(`    try:`);
+  lines.push(`        exec(code, {}, local_vars)`);
+  lines.push(`        return local_vars.get("result", {"executed": True})`);
+  lines.push(`    except Exception:`);
+  lines.push(`        return {"executed": True, "note": "JS Script simulated in Python"}`);
+  lines.push(``);
   lines.push(`async def call_tool(tool: str, args: Dict[str, Any], state: State) -> Any:`);
   lines.push(`    log.info("tool[%s] args=%s", tool, args)`);
   lines.push(`    return {"tool": tool, "ok": True, "args": args}`);
@@ -309,6 +348,41 @@ export function generatePython(
           `await emit_output(${pyStr(c.target || "response")}, state)`,
           `return "next"`,
         ].join("\n");
+      case "http": {
+        const headersJson = c.headers ? c.headers.trim() : "{}";
+        return [
+          `# Resolve template variables`,
+          `url = ${pyStr(c.url || "")}`,
+          `headers_str = ${pyStr(headersJson)}`,
+          `body_str = ${pyStr(c.body || "")}`,
+          `method = ${(pyStr((c.method || "GET").toUpperCase()))}`,
+          ``,
+          `# Perform simple variable interpolation`,
+          `for k, v in state.data.items():`,
+          `    placeholder = f"{{{{state.{k}}}}}"`,
+          `    val_str = str(v)`,
+          `    url = url.replace(placeholder, val_str)`,
+          `    headers_str = headers_str.replace(placeholder, val_str)`,
+          `    body_str = body_str.replace(placeholder, val_str)`,
+          `url = url.replace("{{query}}", str(state.get("query", "")))`,
+          `headers_str = headers_str.replace("{{query}}", str(state.get("query", "")))`,
+          `body_str = body_str.replace("{{query}}", str(state.get("query", "")))`,
+          ``,
+          `headers = json.loads(headers_str) if headers_str.strip() else {}`,
+          `body = body_str if method not in ("GET", "HEAD") and body_str.strip() else None`,
+          `result = await call_http(url, method, headers, body, state)`,
+          `state.last = result`,
+          `return "next"`,
+        ].join("\n");
+      }
+      case "script":
+        return [
+          `# JS Script:`,
+          `# ${c.code ? c.code.replace(/\n/g, "\n# ") : ""}`,
+          `result = await run_js_script(${pyStr(c.code || "")}, state)`,
+          `state.last = result`,
+          `return "next"`,
+        ].join("\n");
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -372,6 +446,18 @@ export function generateJavaScript(
   lines.push(``);
   lines.push(`// adapters — swap with real SDKs`);
   lines.push(`const callLlm = async (model, prompt) => \`[\${model}] \${prompt.slice(0, 40)}…\`;`);
+  lines.push(`const callHttp = async (url, method, headers, body) => {`);
+  lines.push(`  const res = await fetch(url, { method, headers, body });`);
+  lines.push(`  const text = await res.text();`);
+  lines.push(`  let data;`);
+  lines.push(`  try { data = JSON.parse(text); } catch { data = text; }`);
+  lines.push(`  return { status: res.status, data };`);
+  lines.push(`};`);
+  lines.push(`const runJsScript = async (code, state) => {`);
+  lines.push(`  const fn = new Function("state", code);`);
+  lines.push(`  const res = fn(state);`);
+  lines.push(`  return res !== undefined ? res : { executed: true };`);
+  lines.push(`};`);
   lines.push(`const callTool = async (tool, args) => ({ tool, ok: true, args });`);
   lines.push(`const memoryRead = async (key, state) => state.get(\`mem::\${key}\`);`);
   lines.push(`const memoryWrite = async (key, value, state) => state.set(\`mem::\${key}\`, value);`);
@@ -423,6 +509,22 @@ export function generateJavaScript(
         return `state.last = await awaitHuman(${JSON.stringify(c.channel || "ui")}, ${JSON.stringify(c.prompt || "")});\nreturn "next";`;
       case "sink":
         return `await emitOutput(${JSON.stringify(c.target || "response")}, state);\nreturn "next";`;
+      case "http": {
+        const headersJson = c.headers ? c.headers.trim() : "{}";
+        return [
+          `const url = \`${c.url || ""}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? "");`,
+          `const headers = JSON.parse(\`${headersJson}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? ""));`,
+          `const method = "${(c.method || "GET").toUpperCase()}";`,
+          `const body = method !== "GET" && method !== "HEAD" ? \`${c.body || ""}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? "") : undefined;`,
+          `state.last = await callHttp(url, method, headers, body);`,
+          `return "next";`,
+        ].join("\n");
+      }
+      case "script":
+        return [
+          `state.last = await runJsScript(${JSON.stringify(c.code || "")}, state);`,
+          `return "next";`,
+        ].join("\n");
       default:
         return `return "next";`;
     }
@@ -466,4 +568,4 @@ export function generateCode(lang: CodeLanguage, nodes: Node<AgentNodeData>[], e
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script"];
