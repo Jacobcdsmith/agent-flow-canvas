@@ -1118,6 +1118,17 @@ function Canvas() {
 {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
                   </pre>
                 )}
+                {l.stateSnapshot && (
+                  <details className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5 group">
+                    <summary className="cursor-pointer select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] list-none flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+                      <span className="transition-transform duration-100 group-open:rotate-90">▶</span>
+                      <span className="uppercase tracking-[0.1em] text-[9px]">state snapshot</span>
+                    </summary>
+                    <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+{JSON.stringify(l.stateSnapshot, null, 2)}
+                    </pre>
+                  </details>
+                )}
               </div>
             ))}
           </div>
