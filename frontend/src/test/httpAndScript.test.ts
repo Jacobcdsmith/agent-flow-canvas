@@ -70,6 +70,17 @@ describe("runFlow with script and http nodes", () => {
       target: "response",
       result: { done: true, uppercase: "HELLO SCRIPT WORLD" },
     });
+
+    // Verify stateSnapshot has been captured for each node
+    expect(logs[0].stateSnapshot).toBeDefined();
+    expect(logs[1].stateSnapshot).toBeDefined();
+    expect(logs[2].stateSnapshot).toBeDefined();
+
+    // The script should have modified the state at n2 and n3
+    expect(logs[0].stateSnapshot.query).toBe("hello script world"); // trigger didn't modify query
+    expect(logs[1].stateSnapshot.query).toBe("HELLO SCRIPT WORLD"); // script modified state.query
+    expect(logs[1].stateSnapshot.customVal).toBe(123); // script set customVal
+    expect(logs[2].stateSnapshot.query).toBe("HELLO SCRIPT WORLD"); // sink retains state
   });
 
   it("should execute HTTP Request nodes with mocked fetch", async () => {
@@ -164,6 +175,11 @@ describe("runFlow with script and http nodes", () => {
       statusText: "OK",
       data: { success: true, message: "Hello from mock API!" },
     });
+
+    // Verify stateSnapshot captured
+    expect(logs[1].stateSnapshot).toBeDefined();
+    expect(logs[1].stateSnapshot.query).toBe("search-query");
+    expect(logs[1].stateSnapshot.userId).toBe("user-456");
 
     // Restore global fetch
     globalThis.fetch = originalFetch;

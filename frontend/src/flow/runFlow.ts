@@ -12,6 +12,7 @@ export interface RunLog {
   output?: unknown;
   error?: string;
   ms: number;
+  stateSnapshot?: Record<string, unknown>;
 }
 
 export interface RunOptions {
@@ -144,6 +145,13 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     }
 
     const ms = Math.round(performance.now() - t0);
+    let stateSnapshot: Record<string, unknown> | undefined;
+    try {
+      stateSnapshot = JSON.parse(JSON.stringify(state));
+    } catch {
+      stateSnapshot = { ...state };
+    }
+
     const log: RunLog = {
       step,
       nodeId: current.id,
@@ -153,6 +161,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
       output,
       error,
       ms,
+      stateSnapshot,
     };
     logs.push(log);
     onLog?.(log);
