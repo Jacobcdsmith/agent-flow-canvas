@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Gateway,
   GatewayErrors,
@@ -22,6 +22,8 @@ export function GatewayManager({ gateways, onChange, onClearAllKeys, onClose }: 
     gateways[0]?.id ?? null,
   );
   const [showKey, setShowKey] = useState(false);
+  const [headersStr, setHeadersStr] = useState("");
+  const [headersError, setHeadersError] = useState<string | null>(null);
 
   const selected = gateways.find((g) => g.id === selectedId) ?? null;
   const errors: GatewayErrors = useMemo(
@@ -29,6 +31,42 @@ export function GatewayManager({ gateways, onChange, onClearAllKeys, onClose }: 
     [selected],
   );
   const invalid = hasGatewayErrors(errors);
+
+  useEffect(() => {
+    if (selected) {
+      setHeadersStr(selected.extraHeaders ? JSON.stringify(selected.extraHeaders, null, 2) : "");
+    } else {
+      setHeadersStr("");
+    }
+    setHeadersError(null);
+  }, [selectedId]);
+
+  const handleHeadersChange = (val: string) => {
+    setHeadersStr(val);
+    if (!val.trim()) {
+      updateSelected({ extraHeaders: undefined });
+      setHeadersError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(val);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        setHeadersError("Must be a JSON object");
+      } else {
+        const allStrings = Object.entries(parsed).every(
+          ([k, v]) => typeof k === "string" && typeof v === "string"
+        );
+        if (!allStrings) {
+          setHeadersError("JSON keys and values must be strings");
+        } else {
+          updateSelected({ extraHeaders: parsed as Record<string, string> });
+          setHeadersError(null);
+        }
+      }
+    } catch (e) {
+      setHeadersError(e instanceof Error ? e.message : "Invalid JSON");
+    }
+  };
 
   const updateSelected = (patch: Partial<Gateway>) => {
     if (!selected) return;
@@ -301,6 +339,26 @@ export function GatewayManager({ gateways, onChange, onClearAllKeys, onClose }: 
                     <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">
                       ⚠ {errors.defaultModel}
                     </p>
+                  )}
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">
+                    extra headers (json)
+                  </span>
+                  <textarea
+                    value={headersStr}
+                    onChange={(e) => handleHeadersChange(e.target.value)}
+                    placeholder='{ "X-Custom-Header": "value" }'
+                    rows={3}
+                    className={`mt-1 w-full bg-transparent border border-dashed outline-none p-1.5 font-mono text-[11px] text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))] resize-y ${
+                      headersError
+                        ? "border-[hsl(var(--issue))]"
+                        : "border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))]"
+                    }`}
+                  />
+                  {headersError && (
+                    <p className="mt-1 text-[10px] text-[hsl(var(--issue))]">⚠ {headersError}</p>
                   )}
                 </label>
 

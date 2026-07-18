@@ -23,6 +23,12 @@ export interface RunOptions {
   maxSteps?: number;
   onLog?: (log: RunLog) => void;
   stepDelay?: number;
+  onHumanApproval?: (req: {
+    nodeId: string;
+    name: string;
+    prompt: string;
+    channel: string;
+  }) => Promise<string>;
 }
 
 /**
@@ -138,7 +144,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     delete state.__router_branch;
 
     try {
-      output = await runNode(current, state, gateways);
+      output = await runNode(current, state, gateways, opts);
       if (output !== undefined) state.last_output = output;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -206,6 +212,7 @@ async function runNode(
   node: Node<AgentNodeData>,
   state: Record<string, unknown>,
   gateways: Gateway[],
+  opts: RunOptions,
 ): Promise<unknown> {
   const cfg = node.data.config ?? {};
   switch (node.data.kind) {
@@ -276,10 +283,25 @@ async function runNode(
       };
     }
     case "human": {
+      const prompt = interpolate(cfg.prompt || "approve?", state);
+      const channel = cfg.channel || "ui";
+      if (opts.onHumanApproval) {
+        const decision = await opts.onHumanApproval({
+          nodeId: node.id,
+          name: node.data.name,
+          prompt,
+          channel,
+        });
+        return {
+          prompt,
+          channel,
+          decision,
+        };
+      }
       return {
         simulated: true,
-        prompt: interpolate(cfg.prompt || "approve?", state),
-        channel: cfg.channel || "ui",
+        prompt,
+        channel,
         decision: "auto-approved (schematic)",
       };
     }
