@@ -70,6 +70,8 @@ function pickEntry(nodes: Node<AgentNodeData>[]): string | null {
 export function generatePython(
   nodes: Node<AgentNodeData>[],
   edges: Edge[],
+  globals: { key: string; value: string }[] = [],
+  secrets: { key: string; value: string }[] = [],
 ): CodegenResult {
   const errors: string[] = [];
   if (nodes.length === 0) {
@@ -107,6 +109,22 @@ export function generatePython(
   lines.push(``);
   lines.push(`logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")`);
   lines.push(`log = logging.getLogger("agent_flow")`);
+  lines.push(``);
+  lines.push(`# ---------------------------------------------------------------`);
+  lines.push(`# Globals & Secrets (User Configured)`);
+  lines.push(`# ---------------------------------------------------------------`);
+  lines.push(`GLOBALS = {`);
+  globals.forEach((g) => {
+    lines.push(`    ${pyStr(g.key)}: ${pyStr(g.value)},`);
+  });
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`import os`);
+  lines.push(`SECRETS = {`);
+  secrets.forEach((s) => {
+    lines.push(`    ${pyStr(s.key)}: os.environ.get(${pyStr(s.key)}, ${pyStr(s.value)}),`);
+  });
+  lines.push(`}`);
   lines.push(``);
   lines.push(`# ---------------------------------------------------------------`);
   lines.push(`# Minimal embedded runtime`);
@@ -300,14 +318,29 @@ export function generatePython(
         ].join("\n");
       case "llm":
         return [
-          `result = await call_llm(${pyStr(c.model || "gpt-5")}, ${pyStr(c.prompt || "")}, state)`,
+          `prompt_text = ${pyStr(c.prompt || "")}`,
+          `for k, v in state.data.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{state.{k}}}}}", str(v))`,
+          `prompt_text = prompt_text.replace("{{query}}", str(state.get("query", "")))`,
+          `for k, v in GLOBALS.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{global.{k}}}}}", str(v)).replace(f"{{{{globals.{k}}}}}", str(v))`,
+          `for k, v in SECRETS.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{secret.{k}}}}}", str(v)).replace(f"{{{{secrets.{k}}}}}", str(v))`,
+          `result = await call_llm(${pyStr(c.model || "gpt-5")}, prompt_text, state)`,
           `state.last = result`,
           `return "on_success"`,
         ].join("\n");
       case "tool":
         return [
-          `args = ${pyStr(c.args || "")} or {}`,
-          `result = await call_tool(${pyStr(c.tool || "noop")}, {"raw": args}, state)`,
+          `args_str = ${pyStr(c.args || "")}`,
+          `for k, v in state.data.items():`,
+          `    args_str = args_str.replace(f"{{{{state.{k}}}}}", str(v))`,
+          `args_str = args_str.replace("{{query}}", str(state.get("query", "")))`,
+          `for k, v in GLOBALS.items():`,
+          `    args_str = args_str.replace(f"{{{{global.{k}}}}}", str(v)).replace(f"{{{{globals.{k}}}}}", str(v))`,
+          `for k, v in SECRETS.items():`,
+          `    args_str = args_str.replace(f"{{{{secret.{k}}}}}", str(v)).replace(f"{{{{secrets.{k}}}}}", str(v))`,
+          `result = await call_tool(${pyStr(c.tool || "noop")}, {"raw": args_str}, state)`,
           `state.last = result`,
           `return "tool_result"`,
         ].join("\n");
@@ -320,8 +353,15 @@ export function generatePython(
         ].join("\n");
       case "subagent":
         return [
-          `payload = state.get(${pyStr(c.input || "input")}, state.last)`,
-          `result = await run_subgraph(${pyStr(c.graph || "sub")}, payload, state)`,
+          `input_str = ${pyStr(c.input || "input")}`,
+          `for k, v in state.data.items():`,
+          `    input_str = input_str.replace(f"{{{{state.{k}}}}}", str(v))`,
+          `input_str = input_str.replace("{{query}}", str(state.get("query", "")))`,
+          `for k, v in GLOBALS.items():`,
+          `    input_str = input_str.replace(f"{{{{global.{k}}}}}", str(v)).replace(f"{{{{globals.{k}}}}}", str(v))`,
+          `for k, v in SECRETS.items():`,
+          `    input_str = input_str.replace(f"{{{{secret.{k}}}}}", str(v)).replace(f"{{{{secrets.{k}}}}}", str(v))`,
+          `result = await run_subgraph(${pyStr(c.graph || "sub")}, input_str, state)`,
           `state.last = result`,
           `return "on_success"`,
         ].join("\n");
@@ -339,7 +379,15 @@ export function generatePython(
         ].join("\n");
       case "human":
         return [
-          `decision = await await_human(${pyStr(c.channel || "ui")}, ${pyStr(c.prompt || "")}, state)`,
+          `prompt_text = ${pyStr(c.prompt || "")}`,
+          `for k, v in state.data.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{state.{k}}}}}", str(v))`,
+          `prompt_text = prompt_text.replace("{{query}}", str(state.get("query", "")))`,
+          `for k, v in GLOBALS.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{global.{k}}}}}", str(v)).replace(f"{{{{globals.{k}}}}}", str(v))`,
+          `for k, v in SECRETS.items():`,
+          `    prompt_text = prompt_text.replace(f"{{{{secret.{k}}}}}", str(v)).replace(f"{{{{secrets.{k}}}}}", str(v))`,
+          `decision = await await_human(${pyStr(c.channel || "ui")}, prompt_text, state)`,
           `state.last = decision`,
           `return "next"`,
         ].join("\n");
@@ -367,6 +415,18 @@ export function generatePython(
           `url = url.replace("{{query}}", str(state.get("query", "")))`,
           `headers_str = headers_str.replace("{{query}}", str(state.get("query", "")))`,
           `body_str = body_str.replace("{{query}}", str(state.get("query", "")))`,
+          ``,
+          `# Perform global/secret interpolation`,
+          `for k, v in GLOBALS.items():`,
+          `    for placeholder in (f"{{{{global.{k}}}}}", f"{{{{globals.{k}}}}}"):`,
+          `        url = url.replace(placeholder, str(v))`,
+          `        headers_str = headers_str.replace(placeholder, str(v))`,
+          `        body_str = body_str.replace(placeholder, str(v))`,
+          `for k, v in SECRETS.items():`,
+          `    for placeholder in (f"{{{{secret.{k}}}}}", f"{{{{secrets.{k}}}}}"):`,
+          `        url = url.replace(placeholder, str(v))`,
+          `        headers_str = headers_str.replace(placeholder, str(v))`,
+          `        body_str = body_str.replace(placeholder, str(v))`,
           ``,
           `headers = json.loads(headers_str) if headers_str.strip() else {}`,
           `body = body_str if method not in ("GET", "HEAD") and body_str.strip() else None`,
@@ -397,6 +457,8 @@ export function generatePython(
 export function generateJavaScript(
   nodes: Node<AgentNodeData>[],
   edges: Edge[],
+  globals: { key: string; value: string }[] = [],
+  secrets: { key: string; value: string }[] = [],
 ): CodegenResult {
   const errors: string[] = [];
   if (nodes.length === 0) return { code: "// empty graph\n", errors };
@@ -409,6 +471,19 @@ export function generateJavaScript(
   const lines: string[] = [];
   lines.push(`// Auto-generated agent flow. Run:  node flow.mjs`);
   lines.push(`// Nodes: ${nodes.length}  Edges: ${edges.length}`);
+  lines.push(``);
+  lines.push(`// Globals & Secrets (User Configured)`);
+  lines.push(`const GLOBALS = {`);
+  globals.forEach((g) => {
+    lines.push(`  ${JSON.stringify(g.key)}: ${JSON.stringify(g.value)},`);
+  });
+  lines.push(`};`);
+  lines.push(``);
+  lines.push(`const SECRETS = {`);
+  secrets.forEach((s) => {
+    lines.push(`  ${JSON.stringify(s.key)}: process.env.${s.key} ?? ${JSON.stringify(s.value)},`);
+  });
+  lines.push(`};`);
   lines.push(``);
   lines.push(`class State {`);
   lines.push(`  constructor(data = {}) { this.data = data; this.history = []; this.last = null; }`);
@@ -494,28 +569,92 @@ export function generateJavaScript(
       case "trigger":
         return `state.set("input_schema", ${JSON.stringify(c.schema || "")});\nstate.last = { source: ${JSON.stringify(c.source || "manual")} };\nreturn "next";`;
       case "llm":
-        return `state.last = await callLlm(${JSON.stringify(c.model || "gpt-5")}, ${JSON.stringify(c.prompt || "")});\nreturn "on_success";`;
+        return [
+          `let promptText = ${JSON.stringify(c.prompt || "")};`,
+          `for (const [k, v] of Object.entries(state.data)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{state\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `promptText = promptText.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `for (const [k, v] of Object.entries(GLOBALS)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{(global|globals)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `for (const [k, v] of Object.entries(SECRETS)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{(secret|secrets)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `state.last = await callLlm(${JSON.stringify(c.model || "gpt-5")}, promptText);`,
+          `return "on_success";`,
+        ].join("\n");
       case "tool":
-        return `state.last = await callTool(${JSON.stringify(c.tool || "noop")}, { raw: ${JSON.stringify(c.args || "")} });\nreturn "tool_result";`;
+        return [
+          `let argsText = ${JSON.stringify(c.args || "")};`,
+          `for (const [k, v] of Object.entries(state.data)) argsText = argsText.replace(new RegExp(\`\\\\{\\\\{state\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `argsText = argsText.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `for (const [k, v] of Object.entries(GLOBALS)) argsText = argsText.replace(new RegExp(\`\\\\{\\\\{(global|globals)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `for (const [k, v] of Object.entries(SECRETS)) argsText = argsText.replace(new RegExp(\`\\\\{\\\\{(secret|secrets)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `state.last = await callTool(${JSON.stringify(c.tool || "noop")}, { raw: argsText });`,
+          `return "tool_result";`,
+        ].join("\n");
       case "router":
         return `// predicate: ${(c.predicate || "true").replace(/\n/g, " ")}\nreturn state.last ? "true" : "false";`;
       case "subagent":
-        return `state.last = await runSubgraph(${JSON.stringify(c.graph || "sub")}, state.get(${JSON.stringify(c.input || "input")}, state.last));\nreturn "on_success";`;
+        return [
+          `let inputText = ${JSON.stringify(c.input || "")};`,
+          `for (const [k, v] of Object.entries(state.data)) inputText = inputText.replace(new RegExp(\`\\\\{\\\\{state\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `inputText = inputText.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `for (const [k, v] of Object.entries(GLOBALS)) inputText = inputText.replace(new RegExp(\`\\\\{\\\\{(global|globals)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `for (const [k, v] of Object.entries(SECRETS)) inputText = inputText.replace(new RegExp(\`\\\\{\\\\{(secret|secrets)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `state.last = await runSubgraph(${JSON.stringify(c.graph || "sub")}, inputText);`,
+          `return "on_success";`,
+        ].join("\n");
       case "memory":
         return (c.op || "read") === "write"
           ? `await memoryWrite(${JSON.stringify(c.key || "key")}, state.last, state);\nreturn "next";`
           : `state.set(${JSON.stringify(c.key || "key")}, await memoryRead(${JSON.stringify(c.key || "key")}, state));\nreturn "next";`;
       case "human":
-        return `state.last = await awaitHuman(${JSON.stringify(c.channel || "ui")}, ${JSON.stringify(c.prompt || "")});\nreturn "next";`;
+        return [
+          `let promptText = ${JSON.stringify(c.prompt || "")};`,
+          `for (const [k, v] of Object.entries(state.data)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{state\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `promptText = promptText.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `for (const [k, v] of Object.entries(GLOBALS)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{(global|globals)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `for (const [k, v] of Object.entries(SECRETS)) promptText = promptText.replace(new RegExp(\`\\\\{\\\\{(secret|secrets)\\.\${k}\\\\}\\\\}\`, "g"), String(v));`,
+          `state.last = await awaitHuman(${JSON.stringify(c.channel || "ui")}, promptText);`,
+          `return "next";`,
+        ].join("\n");
       case "sink":
         return `await emitOutput(${JSON.stringify(c.target || "response")}, state);\nreturn "next";`;
       case "http": {
         const headersJson = c.headers ? c.headers.trim() : "{}";
         return [
-          `const url = \`${c.url || ""}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? "");`,
-          `const headers = JSON.parse(\`${headersJson}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? ""));`,
+          `let url = \`${c.url || ""}\`;`,
+          `let headersStr = \`${headersJson}\`;`,
+          `let bodyStr = \`${c.body || ""}\`;`,
           `const method = "${(c.method || "GET").toUpperCase()}";`,
-          `const body = method !== "GET" && method !== "HEAD" ? \`${c.body || ""}\`.replace(/\{\{?\\s*state\\.([\\w.]+)\\s*\}?\}/g, (_, k) => state.get(k) ?? "").replace(/\{\{?\\s*query\\s*\}?\}/g, () => state.get("query") ?? "") : undefined;`,
+          ``,
+          `// Interpolate states`,
+          `const stateKeys = Object.keys(state.data);`,
+          `for (const k of stateKeys) {`,
+          `  const regex = new RegExp(\`\\\\{\\\\{state\\.\${k}\\\\}\\\\}\`, "g");`,
+          `  const vStr = String(state.get(k) ?? "");`,
+          `  url = url.replace(regex, vStr);`,
+          `  headersStr = headersStr.replace(regex, vStr);`,
+          `  bodyStr = bodyStr.replace(regex, vStr);`,
+          `}`,
+          `url = url.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `headersStr = headersStr.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          `bodyStr = bodyStr.replace(/\\{\\{query\\}\\}/g, String(state.get("query") ?? ""));`,
+          ``,
+          `// Interpolate globals`,
+          `for (const [k, v] of Object.entries(GLOBALS)) {`,
+          `  const regex = new RegExp(\`\\\\{\\\\{(global|globals)\\.\${k}\\\\}\\\\}\`, "g");`,
+          `  url = url.replace(regex, String(v));`,
+          `  headersStr = headersStr.replace(regex, String(v));`,
+          `  bodyStr = bodyStr.replace(regex, String(v));`,
+          `}`,
+          ``,
+          `// Interpolate secrets`,
+          `for (const [k, v] of Object.entries(SECRETS)) {`,
+          `  const regex = new RegExp(\`\\\\{\\\\{(secret|secrets)\\.\${k}\\\\}\\\\}\`, "g");`,
+          `  url = url.replace(regex, String(v));`,
+          `  headersStr = headersStr.replace(regex, String(v));`,
+          `  bodyStr = bodyStr.replace(regex, String(v));`,
+          `}`,
+          ``,
+          `const headers = JSON.parse(headersStr);`,
+          `const body = method !== "GET" && method !== "HEAD" ? bodyStr : undefined;`,
           `state.last = await callHttp(url, method, headers, body);`,
           `return "next";`,
         ].join("\n");
@@ -563,8 +702,16 @@ export function lintPython(code: string): string[] {
 }
 
 export type CodeLanguage = "python" | "javascript";
-export function generateCode(lang: CodeLanguage, nodes: Node<AgentNodeData>[], edges: Edge[]): CodegenResult {
-  return lang === "python" ? generatePython(nodes, edges) : generateJavaScript(nodes, edges);
+export function generateCode(
+  lang: CodeLanguage,
+  nodes: Node<AgentNodeData>[],
+  edges: Edge[],
+  globals: { key: string; value: string }[] = [],
+  secrets: { key: string; value: string }[] = [],
+): CodegenResult {
+  return lang === "python"
+    ? generatePython(nodes, edges, globals, secrets)
+    : generateJavaScript(nodes, edges, globals, secrets);
 }
 
 // also export the kind set for sanity
