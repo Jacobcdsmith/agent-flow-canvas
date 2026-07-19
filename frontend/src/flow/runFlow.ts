@@ -29,6 +29,8 @@ export interface RunOptions {
     prompt: string;
     channel: string;
   }) => Promise<string>;
+  globals?: { key: string; value: string }[];
+  secrets?: { key: string; value: string }[];
 }
 
 /**
@@ -37,16 +39,37 @@ export interface RunOptions {
  *
  * @param template The raw template string containing placeholders.
  * @param state The workflow execution state object.
+ * @param globals Optional global variables key-value list.
+ * @param secrets Optional secrets key-value list.
  * @returns The fully interpolated template string.
  */
-function interpolate(template: string, state: Record<string, unknown>): string {
+function interpolate(
+  template: string,
+  state: Record<string, unknown>,
+  globals: { key: string; value: string }[] = [],
+  secrets: { key: string; value: string }[] = [],
+): string {
   if (!template) return "";
-  return template
+  let result = template
     .replace(/\{\{?\s*state\.([\w.]+)\s*\}?\}/g, (_m, k) => {
       const v = getPath(state, String(k));
       return v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v);
     })
     .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""));
+
+  // Interpolate global variables
+  result = result.replace(/\{\{?\s*globals?\.(\w+)\s*\}?\}/g, (_m, key) => {
+    const item = globals.find((g) => g.key === key);
+    return item ? item.value : "";
+  });
+
+  // Interpolate secrets
+  result = result.replace(/\{\{?\s*secrets?\.(\w+)\s*\}?\}/g, (_m, key) => {
+    const item = secrets.find((s) => s.key === key);
+    return item ? item.value : "";
+  });
+
+  return result;
 }
 
 /**
@@ -225,7 +248,7 @@ async function runNode(
       const model = (cfg.model && cfg.model.trim()) || gw.defaultModel;
       const temperature = parseFloatOr(cfg.temperature, gw.temperature);
       const maxTokens = parseIntOr(cfg.max_tokens, gw.maxTokens);
-      const promptText = interpolate(cfg.prompt || "", state);
+      const promptText = interpolate(cfg.prompt || "", state, opts.globals, opts.secrets);
       const messages: ChatMessage[] = [];
       const userQuery = String(state.query ?? "");
       if (promptText) messages.push({ role: "system", content: promptText });
@@ -245,7 +268,7 @@ async function runNode(
       return {
         simulated: true,
         tool: cfg.tool || "unknown",
-        args: interpolate(cfg.args || "", state),
+        args: interpolate(cfg.args || "", state, opts.globals, opts.secrets),
         note: "tool execution is schematic — wire your own runtime to make this real",
       };
     }
@@ -278,12 +301,12 @@ async function runNode(
       return {
         simulated: true,
         subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state),
+        input: interpolate(cfg.input || "", state, opts.globals, opts.secrets),
         note: "subagent execution is schematic",
       };
     }
     case "human": {
-      const prompt = interpolate(cfg.prompt || "approve?", state);
+      const prompt = interpolate(cfg.prompt || "approve?", state, opts.globals, opts.secrets);
       const channel = cfg.channel || "ui";
       if (opts.onHumanApproval) {
         const decision = await opts.onHumanApproval({
@@ -306,7 +329,7 @@ async function runNode(
       };
     }
     case "http": {
-      const url = interpolate(cfg.url || "", state);
+      const url = interpolate(cfg.url || "", state, opts.globals, opts.secrets);
       if (!url) throw new Error("HTTP node requires a URL");
 
       const method = (cfg.method || "GET").toUpperCase();
@@ -315,7 +338,7 @@ async function runNode(
       const rawHeaders = cfg.headers || "";
       if (rawHeaders.trim()) {
         try {
-          const interpolatedHeaders = interpolate(rawHeaders, state);
+          const interpolatedHeaders = interpolate(rawHeaders, state, opts.globals, opts.secrets);
           headers = JSON.parse(interpolatedHeaders);
         } catch (e) {
           throw new Error(`Failed to parse HTTP headers JSON: ${e instanceof Error ? e.message : String(e)}`);
@@ -325,7 +348,7 @@ async function runNode(
       let body: string | undefined;
       const rawBody = cfg.body || "";
       if (rawBody.trim() && method !== "GET" && method !== "HEAD") {
-        body = interpolate(rawBody, state);
+        body = interpolate(rawBody, state, opts.globals, opts.secrets);
       }
 
       const fetchOptions: RequestInit = {

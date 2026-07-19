@@ -39,6 +39,15 @@ import { GatewayManager } from "@/flow/GatewayManager";
 import { runFlow, RunLog } from "@/flow/runFlow";
 import { IntroTutorial } from "@/flow/IntroTutorial";
 import { SampleWalkthrough } from "@/flow/SampleWalkthrough";
+import {
+  loadGlobals,
+  saveGlobals,
+  loadSecrets,
+  saveSecrets,
+  GlobalVariable,
+  Secret,
+} from "@/flow/globals";
+import { GlobalsManager } from "@/flow/GlobalsManager";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -107,6 +116,19 @@ function Canvas() {
     edgeIds: Set<string>;
     color: string;
   } | null>(null);
+
+  // ---- Globals & Secrets state ----
+  const [globals, setGlobals] = useState<GlobalVariable[]>(() => loadGlobals());
+  useEffect(() => {
+    saveGlobals(globals);
+  }, [globals]);
+
+  const [secrets, setSecrets] = useState<Secret[]>(() => loadSecrets());
+  useEffect(() => {
+    saveSecrets(secrets);
+  }, [secrets]);
+
+  const [showGlobals, setShowGlobals] = useState(false);
 
   const gatewayIssues = useMemo(() => {
     if (gateways.length === 0) return ["no gateway configured"];
@@ -373,8 +395,8 @@ function Canvas() {
   );
 
   const generated = useMemo(
-    () => generateCode(codeLang, nodes, edges),
-    [nodes, edges, codeLang],
+    () => generateCode(codeLang, nodes, edges, globals, secrets),
+    [nodes, edges, codeLang, globals, secrets],
   );
   const pseudocode = generated.code;
   const codeLintIssues = useMemo(
@@ -562,6 +584,8 @@ function Canvas() {
         gateways,
         initialState: parsedState,
         stepDelay,
+        globals,
+        secrets,
         onLog: (log) => {
           setRunLogs((prev) => [...(prev ?? []), log]);
           if (log.nodeId && log.nodeId !== "_error" && log.nodeId !== "_runtime") {
@@ -667,6 +691,14 @@ function Canvas() {
           >
             <span className="hidden sm:inline">⚙ gateways{gatewayInvalid ? " ⚠" : ` · ${gateways.length}`}</span>
             <span className="sm:hidden">⚙{gatewayInvalid ? "⚠" : ""}</span>
+          </button>
+          <button
+            onClick={() => setShowGlobals(true)}
+            title={`${globals.length} global variable(s), ${secrets.length} secret(s) configured`}
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">⚙ globals & secrets · {globals.length + secrets.length}</span>
+            <span className="sm:hidden">⚙ vars</span>
           </button>
           <button
             onClick={() => setShowSample(true)}
@@ -1239,6 +1271,16 @@ function Canvas() {
             toast("All API keys cleared from this browser");
           }}
           onClose={() => setShowGateway(false)}
+        />
+      )}
+
+      {showGlobals && (
+        <GlobalsManager
+          globals={globals}
+          onGlobalsChange={setGlobals}
+          secrets={secrets}
+          onSecretsChange={setSecrets}
+          onClose={() => setShowGlobals(false)}
         />
       )}
 
