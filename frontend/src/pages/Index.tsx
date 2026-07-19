@@ -69,6 +69,14 @@ function Canvas() {
   });
   const [initialStateError, setInitialStateError] = useState<string | null>(null);
   const [visualSpeed, setVisualSpeed] = useState<"fast" | "visualized">("visualized");
+  const [pendingApproval, setPendingApproval] = useState<{
+    nodeId: string;
+    name: string;
+    prompt: string;
+    channel: string;
+    resolve: (value: string) => void;
+  } | null>(null);
+  const [feedbackText, setFeedbackText] = useState("");
 
   useEffect(() => {
     try {
@@ -523,6 +531,12 @@ function Canvas() {
       return;
     }
 
+    if (pendingApproval) {
+      pendingApproval.resolve("aborted");
+      setPendingApproval(null);
+    }
+    setFeedbackText("");
+
     let parsedState = { query: "hello world" };
     if (initialStateStr.trim()) {
       try {
@@ -558,6 +572,17 @@ function Canvas() {
             });
           }
         },
+        onHumanApproval: ({ nodeId, name, prompt, channel }) => {
+          return new Promise<string>((resolve) => {
+            setPendingApproval({
+              nodeId,
+              name,
+              prompt,
+              channel,
+              resolve,
+            });
+          });
+        },
       });
       setRunLogs(logs);
       const errored = logs.some((l) => l.error);
@@ -579,11 +604,13 @@ function Canvas() {
       ]);
     } finally {
       setRunning(false);
+      setPendingApproval(null);
+      setFeedbackText("");
       setTimeout(() => {
         setHighlight(null);
       }, 1500);
     }
-  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -1008,6 +1035,11 @@ function Canvas() {
                 onClick={() => {
                   setShowRun(false);
                   setHighlight(null);
+                  if (pendingApproval) {
+                    pendingApproval.resolve("aborted");
+                    setPendingApproval(null);
+                  }
+                  setFeedbackText("");
                 }}
                 className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]"
               >
@@ -1086,7 +1118,70 @@ function Canvas() {
               </div>
             </div>
 
-            {running && (
+            {pendingApproval && (
+              <div className="border-2 border-[hsl(var(--accent-deep))] p-3 space-y-2 bg-[hsl(var(--accent-deep)/0.03)] animate-pulse shadow-md mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 bg-[hsl(var(--issue))] rounded-full animate-ping shrink-0" />
+                  <span className="font-mono text-[10px] uppercase tracking-[0.2em] font-semibold text-[hsl(var(--issue))]">
+                    Action Required · Human-In-The-Loop
+                  </span>
+                </div>
+                <div className="font-mono text-[11px] font-semibold text-[hsl(var(--ink))]">
+                  Node: {pendingApproval.name} ({pendingApproval.nodeId})
+                </div>
+                <div className="font-mono text-[10px] text-[hsl(var(--ink-soft))]">
+                  Channel: <span className="uppercase font-semibold text-[hsl(var(--ink))]">{pendingApproval.channel}</span>
+                </div>
+                <div className="p-2.5 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--grid-line))] font-mono text-[11px] text-[hsl(var(--ink))] whitespace-pre-wrap leading-relaxed">
+                  {pendingApproval.prompt}
+                </div>
+
+                {/* Custom feedback input */}
+                <div className="space-y-1 pt-1">
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--ink-faint))] block">
+                    Optionally provide custom feedback or instruction:
+                  </span>
+                  <textarea
+                    value={feedbackText}
+                    onChange={(e) => setFeedbackText(e.target.value)}
+                    placeholder="Enter instructions, corrections, or suggestions for the agent..."
+                    rows={2}
+                    className="w-full font-mono text-[10px] p-2 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--grid-line))] focus:border-[hsl(var(--ink))] outline-none resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pendingApproval.resolve("approved");
+                      setPendingApproval(null);
+                      setFeedbackText("");
+                    }}
+                    className="flex-1 font-mono text-[10px] uppercase tracking-wider py-1.5 bg-[hsl(var(--ink))] text-[hsl(var(--paper))] hover:opacity-90 font-bold transition-all border border-transparent"
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (feedbackText.trim()) {
+                        pendingApproval.resolve(feedbackText.trim());
+                      } else {
+                        pendingApproval.resolve("rejected");
+                      }
+                      setPendingApproval(null);
+                      setFeedbackText("");
+                    }}
+                    className="flex-1 font-mono text-[10px] uppercase tracking-wider py-1.5 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-all"
+                  >
+                    {feedbackText.trim() ? "Submit Feedback" : "✗ Reject"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {running && !pendingApproval && (
               <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
                 executing in browser…
               </div>
