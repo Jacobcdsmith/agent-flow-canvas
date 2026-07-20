@@ -2,6 +2,7 @@ import type { Edge, Node } from "reactflow";
 import type { AgentNodeData } from "./types";
 import type { Gateway } from "./gateways";
 import { callLLM, ChatMessage } from "./adapters";
+import { loadGlobals, loadSecrets } from "./globals";
 
 export interface RunLog {
   step: number;
@@ -29,19 +30,48 @@ export interface RunOptions {
     prompt: string;
     channel: string;
   }) => Promise<string>;
+  globals?: { key: string; value: string }[];
+  secrets?: { key: string; value: string }[];
 }
 
 /**
  * Interpolates state variables and parameters inside double-curly braces (e.g., {{state.value}})
  * in a template string. Falls back to empty string if a path is undefined.
+ * Also interpolates dynamic Global Variables and Secrets.
  *
  * @param template The raw template string containing placeholders.
  * @param state The workflow execution state object.
  * @returns The fully interpolated template string.
  */
-function interpolate(template: string, state: Record<string, unknown>): string {
+function interpolate(
+  template: string,
+  state: Record<string, unknown>,
+  globals?: { key: string; value: string }[],
+  secrets?: { key: string; value: string }[]
+): string {
   if (!template) return "";
-  return template
+  let result = template;
+
+  if (globals) {
+    globals.forEach((g) => {
+      const regex = new RegExp(`\\{\\{\\s*global\\.${g.key}\\s*\\}\\}`, "g");
+      result = result.replace(regex, g.value);
+    });
+  }
+
+  if (secrets) {
+    secrets.forEach((s) => {
+      const regex = new RegExp(`\\{\\{\\s*secret\\.${s.key}\\s*\\}\\}`, "g");
+      result = result.replace(regex, s.value);
+    });
+  }
+
+  // Fallback unmatched global and secret placeholders to empty string
+  result = result
+    .replace(/\{\{\s*global\.[^}]+\s*\}\}/g, "")
+    .replace(/\{\{\s*secret\.[^}]+\s*\}\}/g, "");
+
+  return result
     .replace(/\{\{?\s*state\.([\w.]+)\s*\}?\}/g, (_m, k) => {
       const v = getPath(state, String(k));
       return v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v);
@@ -131,6 +161,9 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     nodes[0];
   if (!entry) throw new Error("No entry node");
 
+  const globalsList = opts.globals ?? loadGlobals();
+  const secretsList = opts.secrets ?? loadSecrets();
+
   let current: Node<AgentNodeData> | undefined = entry;
   let prevEdgeLabel = "start";
   let step = 0;
@@ -144,7 +177,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     delete state.__router_branch;
 
     try {
-      output = await runNode(current, state, gateways, opts);
+      output = await runNode(current, state, gateways, opts, globalsList, secretsList);
       if (output !== undefined) state.last_output = output;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -213,6 +246,8 @@ async function runNode(
   state: Record<string, unknown>,
   gateways: Gateway[],
   opts: RunOptions,
+  globalsList: { key: string; value: string }[],
+  secretsList: { key: string; value: string }[],
 ): Promise<unknown> {
   const cfg = node.data.config ?? {};
   switch (node.data.kind) {
@@ -225,7 +260,7 @@ async function runNode(
       const model = (cfg.model && cfg.model.trim()) || gw.defaultModel;
       const temperature = parseFloatOr(cfg.temperature, gw.temperature);
       const maxTokens = parseIntOr(cfg.max_tokens, gw.maxTokens);
-      const promptText = interpolate(cfg.prompt || "", state);
+      const promptText = interpolate(cfg.prompt || "", state, globalsList, secretsList);
       const messages: ChatMessage[] = [];
       const userQuery = String(state.query ?? "");
       if (promptText) messages.push({ role: "system", content: promptText });
@@ -245,7 +280,7 @@ async function runNode(
       return {
         simulated: true,
         tool: cfg.tool || "unknown",
-        args: interpolate(cfg.args || "", state),
+        args: interpolate(cfg.args || "", state, globalsList, secretsList),
         note: "tool execution is schematic — wire your own runtime to make this real",
       };
     }
@@ -278,12 +313,12 @@ async function runNode(
       return {
         simulated: true,
         subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state),
+        input: interpolate(cfg.input || "", state, globalsList, secretsList),
         note: "subagent execution is schematic",
       };
     }
     case "human": {
-      const prompt = interpolate(cfg.prompt || "approve?", state);
+      const prompt = interpolate(cfg.prompt || "approve?", state, globalsList, secretsList);
       const channel = cfg.channel || "ui";
       if (opts.onHumanApproval) {
         const decision = await opts.onHumanApproval({
@@ -306,7 +341,7 @@ async function runNode(
       };
     }
     case "http": {
-      const url = interpolate(cfg.url || "", state);
+      const url = interpolate(cfg.url || "", state, globalsList, secretsList);
       if (!url) throw new Error("HTTP node requires a URL");
 
       const method = (cfg.method || "GET").toUpperCase();
@@ -315,7 +350,7 @@ async function runNode(
       const rawHeaders = cfg.headers || "";
       if (rawHeaders.trim()) {
         try {
-          const interpolatedHeaders = interpolate(rawHeaders, state);
+          const interpolatedHeaders = interpolate(rawHeaders, state, globalsList, secretsList);
           headers = JSON.parse(interpolatedHeaders);
         } catch (e) {
           throw new Error(`Failed to parse HTTP headers JSON: ${e instanceof Error ? e.message : String(e)}`);
@@ -325,7 +360,7 @@ async function runNode(
       let body: string | undefined;
       const rawBody = cfg.body || "";
       if (rawBody.trim() && method !== "GET" && method !== "HEAD") {
-        body = interpolate(rawBody, state);
+        body = interpolate(rawBody, state, globalsList, secretsList);
       }
 
       const fetchOptions: RequestInit = {

@@ -71,7 +71,7 @@ describe("Code Generation for HTTP and Script Nodes", () => {
     expect(pyResult.code).toContain("urllib.request");
     expect(pyResult.code).toContain("call_http");
     expect(pyResult.code).toContain("run_js_script");
-    expect(pyResult.code).toContain("url.replace");
+    expect(pyResult.code).toContain("interpolate(");
 
     // Run syntax/bracket linter
     const lintIssues = lintPython(pyResult.code);
