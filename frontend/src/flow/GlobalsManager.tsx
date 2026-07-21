@@ -32,6 +32,138 @@ export function GlobalsManager({
   );
   const [showSecretMap, setShowSecretMap] = useState<Record<string, boolean>>({});
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((item) => {
+      return (
+        item.key.toLowerCase().includes(q) ||
+        item.value.toLowerCase().includes(q)
+      );
+    });
+  }, [items, searchQuery]);
+
+  const handleClearAllGlobals = () => {
+    if (globals.length === 0) return;
+    if (!confirm("Are you sure you want to delete ALL global variables? This action cannot be undone.")) return;
+    onGlobalsChange([]);
+    setSelectedId(secrets[0]?.id ?? null);
+  };
+
+  const handleClearAllSecrets = () => {
+    if (secrets.length === 0) return;
+    if (!confirm("Are you sure you want to delete ALL secrets? This action cannot be undone.")) return;
+    onSecretsChange([]);
+    setSelectedId(globals[0]?.id ?? null);
+  };
+
+  const handleExportAll = () => {
+    const env = {
+      globals: globals.map(({ key, value }) => ({ key, value })),
+      secrets: secrets.map(({ key, value }) => ({ key, value })),
+    };
+    const data = JSON.stringify(env, null, 2);
+    navigator.clipboard.writeText(data).then(() => {
+      alert("Environment variables copied to clipboard!");
+    });
+  };
+
+  const handleImportAll = (replace: boolean) => {
+    setImportError(null);
+    if (!importText.trim()) {
+      setImportError("Please paste a JSON environment configuration first.");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(importText);
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new Error("Input must be a JSON object containing 'globals' and/or 'secrets'.");
+      }
+
+      const importedGlobals: GlobalVar[] = [];
+      const importedSecrets: SecretVar[] = [];
+
+      if (parsed.globals) {
+        if (!Array.isArray(parsed.globals)) {
+          throw new Error("'globals' must be an array.");
+        }
+        parsed.globals.forEach((g: any, index: number) => {
+          if (!g || typeof g !== "object" || typeof g.key !== "string") {
+            throw new Error(`Invalid global variable definition at index ${index}`);
+          }
+          importedGlobals.push({
+            id: cryptoId(),
+            key: g.key,
+            value: typeof g.value === "string" ? g.value : JSON.stringify(g.value),
+          });
+        });
+      }
+
+      if (parsed.secrets) {
+        if (!Array.isArray(parsed.secrets)) {
+          throw new Error("'secrets' must be an array.");
+        }
+        parsed.secrets.forEach((s: any, index: number) => {
+          if (!s || typeof s !== "object" || typeof s.key !== "string") {
+            throw new Error(`Invalid secret definition at index ${index}`);
+          }
+          importedSecrets.push({
+            id: cryptoId(),
+            key: s.key,
+            value: typeof s.value === "string" ? s.value : JSON.stringify(s.value),
+          });
+        });
+      }
+
+      if (importedGlobals.length === 0 && importedSecrets.length === 0) {
+        throw new Error("No variables found to import. Verify your JSON format.");
+      }
+
+      if (replace) {
+        if (!confirm("Are you sure you want to REPLACE all current globals and secrets with the imported ones?")) {
+          return;
+        }
+        onGlobalsChange(importedGlobals);
+        onSecretsChange(importedSecrets);
+        setSelectedId(importedGlobals[0]?.id ?? importedSecrets[0]?.id ?? null);
+      } else {
+        // Merge-import
+        const nextGlobals = [...globals];
+        importedGlobals.forEach((ig) => {
+          const idx = nextGlobals.findIndex((g) => g.key.toLowerCase() === ig.key.toLowerCase());
+          if (idx >= 0) {
+            nextGlobals[idx] = ig;
+          } else {
+            nextGlobals.push(ig);
+          }
+        });
+
+        const nextSecrets = [...secrets];
+        importedSecrets.forEach((is) => {
+          const idx = nextSecrets.findIndex((s) => s.key.toLowerCase() === is.key.toLowerCase());
+          if (idx >= 0) {
+            nextSecrets[idx] = is;
+          } else {
+            nextSecrets.push(is);
+          }
+        });
+
+        onGlobalsChange(nextGlobals);
+        onSecretsChange(nextSecrets);
+        setSelectedId(importedGlobals[0]?.id ?? importedSecrets[0]?.id ?? null);
+      }
+
+      setImportText("");
+      alert("Environment successfully imported!");
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Failed to parse JSON");
+    }
+  };
+
   const selected = useMemo(() => {
     return items.find((item) => item.id === selectedId) ?? null;
   }, [items, selectedId]);
@@ -164,13 +296,34 @@ export function GlobalsManager({
               </button>
             </div>
 
+            {/* Sidebar Search */}
+            <div className="p-2 border-b border-dashed border-[hsl(var(--grid-line))]">
+              <div className="flex items-center gap-1.5 border border-dashed border-[hsl(var(--grid-line))] focus-within:border-[hsl(var(--ink))] px-2 bg-transparent">
+                <span className="font-mono text-[10px] text-[hsl(var(--ink-faint))]">/</span>
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="search variables…"
+                  className="flex-1 bg-transparent py-1 font-mono text-[10px] text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))] outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="font-mono text-[10px] text-[hsl(var(--ink-faint))] hover:text-[hsl(var(--ink))]"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="flex-1 overflow-y-auto">
-              {items.length === 0 && (
+              {filteredItems.length === 0 && (
                 <div className="p-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] leading-relaxed text-center">
-                  No globals or secrets configured yet.
+                  No variables found.
                 </div>
               )}
-              {items.map((item) => {
+              {filteredItems.map((item) => {
                 const isSel = selectedId === item.id;
                 const bad = !!validateKey(item.key);
                 return (
@@ -202,6 +355,24 @@ export function GlobalsManager({
                 );
               })}
             </div>
+
+            {/* Sidebar Bulk Clear Actions */}
+            <div className="p-2 border-t border-dashed border-[hsl(var(--grid-line))] space-y-1.5">
+              <button
+                disabled={globals.length === 0}
+                onClick={handleClearAllGlobals}
+                className="w-full font-mono text-[9px] uppercase tracking-wider px-2 py-1.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] disabled:opacity-40 disabled:cursor-not-allowed text-left"
+              >
+                Clear All Globals
+              </button>
+              <button
+                disabled={secrets.length === 0}
+                onClick={handleClearAllSecrets}
+                className="w-full font-mono text-[9px] uppercase tracking-wider px-2 py-1.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] disabled:opacity-40 disabled:cursor-not-allowed text-left"
+              >
+                Clear All Secrets
+              </button>
+            </div>
           </aside>
 
           {/* Editor Area */}
@@ -211,7 +382,7 @@ export function GlobalsManager({
                 <p className="uppercase tracking-[0.2em] text-[10px] text-[hsl(var(--ink-soft))]">
                   How to Use Environment Variables
                 </p>
-                <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 bg-[hsl(var(--ink)/0.02)]">
+                <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 bg-[hsl(var(--ink)/0.02)] mb-4">
                   <p>
                     Add workspace variables here to substitute secrets (API keys, passwords) and dynamic values in your graph without hardcoding.
                   </p>
@@ -233,6 +404,60 @@ export function GlobalsManager({
                   <p className="text-[10px]">
                     Placeholders are replaced dynamically during browser flow execution and exported code (Python & Javascript).
                   </p>
+                </div>
+
+                <p className="uppercase tracking-[0.2em] text-[10px] text-[hsl(var(--ink-soft))] pt-2">
+                  Backup & Portability
+                </p>
+                <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-3 bg-[hsl(var(--ink)/0.02)] text-[hsl(var(--ink))]">
+                  <p className="text-[10px] text-[hsl(var(--ink-soft))]">
+                    Backup or share your workspace environment. API Keys/secrets values are included in plaintext in the JSON.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleExportAll}
+                    className="font-mono text-[10px] uppercase tracking-wider px-3 py-1.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Export Environment (Copy JSON)
+                  </button>
+
+                  <div className="space-y-1 pt-1.5">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-[hsl(var(--ink-soft))] block">
+                      Import Environment
+                    </span>
+                    <textarea
+                      value={importText}
+                      onChange={(e) => setImportText(e.target.value)}
+                      placeholder='Paste environment JSON here, e.g. { "globals": [], "secrets": [] }'
+                      rows={4}
+                      className={`w-full bg-[hsl(var(--paper))] border border-dashed outline-none p-2 font-mono text-[10px] resize-none ${
+                        importError
+                          ? "border-[hsl(var(--issue))] text-[hsl(var(--issue))]"
+                          : "border-[hsl(var(--grid-line))] focus:border-[hsl(var(--ink))]"
+                      }`}
+                    />
+                    {importError && (
+                      <p className="text-[9px] text-[hsl(var(--issue))] leading-normal">
+                        ⚠ {importError}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleImportAll(false)}
+                        className="font-mono text-[9px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                      >
+                        Merge Import
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleImportAll(true)}
+                        className="font-mono text-[9px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                      >
+                        Replace All & Import
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (

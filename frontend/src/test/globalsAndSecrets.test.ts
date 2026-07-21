@@ -1,8 +1,12 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { runFlow } from "../flow/runFlow";
 import { generatePython, generateJavaScript } from "../flow/codegen";
 import { Node, Edge } from "reactflow";
 import { AgentNodeData } from "../flow/types";
+import { render, screen, fireEvent } from "@testing-library/react";
+import React, { useState } from "react";
+import { GlobalsManager } from "../flow/GlobalsManager";
 
 describe("Globals and Secrets Features", () => {
   const nodes: Node<AgentNodeData>[] = [
@@ -118,5 +122,122 @@ describe("Globals and Secrets Features", () => {
     expect(jsResult.code).toContain('const GLOBALS = {\n  "API_VERSION": "v2",\n  "ENV_NAME": "production"\n};');
     expect(jsResult.code).toContain('const SECRETS = {\n  "API_KEY": "sk-test123456"\n};');
     expect(jsResult.code).toContain("interpolate(");
+  });
+
+  describe("GlobalsManager Advanced Features", () => {
+    const TestGlobalsWrapper = ({
+      initialGlobals = [
+        { id: "g1", key: "VAR_ONE", value: "hello" },
+        { id: "g2", key: "VAR_TWO", value: "world" },
+      ],
+      initialSecrets = [
+        { id: "s1", key: "SECRET_ONE", value: "supersecret" },
+      ],
+    }: any) => {
+      const [globals, setGlobals] = useState(initialGlobals);
+      const [secrets, setSecrets] = useState(initialSecrets);
+
+      return React.createElement(GlobalsManager, {
+        globals,
+        secrets,
+        onGlobalsChange: setGlobals,
+        onSecretsChange: setSecrets,
+        onClose: vi.fn(),
+      });
+    };
+
+    it("should filter globals and secrets in the sidebar based on search query", () => {
+      render(React.createElement(TestGlobalsWrapper));
+
+      // Initially, we should see VAR_ONE, VAR_TWO, and SECRET_ONE
+      expect(screen.getByText("VAR_ONE")).toBeInTheDocument();
+      expect(screen.getByText("VAR_TWO")).toBeInTheDocument();
+      expect(screen.getByText("SECRET_ONE")).toBeInTheDocument();
+
+      // Type "ONE" in the search box
+      const searchInput = screen.getByPlaceholderText("search variables…");
+      fireEvent.change(searchInput, { target: { value: "ONE" } });
+
+      // Now we should see VAR_ONE and SECRET_ONE, but NOT VAR_TWO
+      expect(screen.getByText("VAR_ONE")).toBeInTheDocument();
+      expect(screen.getByText("SECRET_ONE")).toBeInTheDocument();
+      expect(screen.queryByText("VAR_TWO")).not.toBeInTheDocument();
+    });
+
+    it("should support bulk clearing globals and secrets", () => {
+      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+      const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
+
+      render(React.createElement(TestGlobalsWrapper));
+
+      // Initially we have globals
+      expect(screen.getByText("VAR_ONE")).toBeInTheDocument();
+
+      // Click clear all globals
+      const clearGlobalsBtn = screen.getByText("Clear All Globals");
+      fireEvent.click(clearGlobalsBtn);
+
+      expect(confirmSpy).toHaveBeenCalled();
+      // VAR_ONE and VAR_TWO should be removed
+      expect(screen.queryByText("VAR_ONE")).not.toBeInTheDocument();
+      expect(screen.queryByText("VAR_TWO")).not.toBeInTheDocument();
+      // SECRET_ONE should still exist
+      expect(screen.getByText("SECRET_ONE")).toBeInTheDocument();
+
+      confirmSpy.mockRestore();
+      alertSpy.mockRestore();
+    });
+
+    it("should support environment export to clipboard", () => {
+      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+      const writeTextMock = vi.fn().mockImplementation(() => Promise.resolve());
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: writeTextMock },
+        writable: true,
+      });
+
+      render(React.createElement(TestGlobalsWrapper, { initialGlobals: [], initialSecrets: [] }));
+
+      // When items are empty, the main area shows "Export Environment"
+      const exportBtn = screen.getByText("Export Environment (Copy JSON)");
+      fireEvent.click(exportBtn);
+
+      expect(writeTextMock).toHaveBeenCalled();
+      const exportedData = JSON.parse(writeTextMock.mock.calls[0][0]);
+      expect(exportedData).toHaveProperty("globals");
+      expect(exportedData).toHaveProperty("secrets");
+
+      alertSpy.mockRestore();
+    });
+
+    it("should support environment import (merge and replace) with full validation", () => {
+      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+      const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
+
+      render(React.createElement(TestGlobalsWrapper, { initialGlobals: [], initialSecrets: [] }));
+
+      const importTextarea = screen.getByPlaceholderText(/Paste environment JSON here/);
+      const mergeBtn = screen.getByText("Merge Import");
+
+      // 1. Invalid JSON validation
+      fireEvent.change(importTextarea, { target: { value: "{ invalid json" } });
+      fireEvent.click(mergeBtn);
+      expect(screen.getByText(/Expected property name/)).toBeInTheDocument();
+
+      // 2. Successful merge import
+      const validJSON = JSON.stringify({
+        globals: [{ key: "IMPORTED_GLOBAL", value: "123" }],
+        secrets: [{ key: "IMPORTED_SECRET", value: "abc" }],
+      });
+      fireEvent.change(importTextarea, { target: { value: validJSON } });
+      fireEvent.click(mergeBtn);
+
+      expect(alertSpy).toHaveBeenCalledWith("Environment successfully imported!");
+      expect(screen.getByText("IMPORTED_GLOBAL")).toBeInTheDocument();
+      expect(screen.getByText("IMPORTED_SECRET")).toBeInTheDocument();
+
+      confirmSpy.mockRestore();
+      alertSpy.mockRestore();
+    });
   });
 });
