@@ -20,6 +20,9 @@ export function GlobalsManager({
   onSecretsChange,
   onClose,
 }: Props) {
+  // Search query state
+  const [searchQuery, setSearchQuery] = useState("");
+
   // Combine globals and secrets into a unified list for the sidebar
   const items = useMemo(() => {
     const gList = globals.map((g) => ({ ...g, type: "global" as const }));
@@ -27,10 +30,27 @@ export function GlobalsManager({
     return [...gList, ...sList];
   }, [globals, secrets]);
 
+  // Filter items in real-time based on the search query
+  const filteredItems = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter(
+      (item) =>
+        item.key.toLowerCase().includes(query) ||
+        item.value.toLowerCase().includes(query) ||
+        item.type.includes(query)
+    );
+  }, [items, searchQuery]);
+
   const [selectedId, setSelectedId] = useState<string | null>(
-    items[0]?.id ?? null
+    filteredItems[0]?.id ?? null
   );
   const [showSecretMap, setShowSecretMap] = useState<Record<string, boolean>>({});
+
+  // Import Overlay state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
 
   const selected = useMemo(() => {
     return items.find((item) => item.id === selectedId) ?? null;
@@ -91,6 +111,7 @@ export function GlobalsManager({
       onSecretsChange([...secrets, newItem]);
     }
     setSelectedId(id);
+    setSearchQuery(""); // Clear search to make newly added item visible
   };
 
   const removeSelected = () => {
@@ -110,6 +131,120 @@ export function GlobalsManager({
     }
   };
 
+  const handleClearAll = () => {
+    if (items.length === 0) {
+      alert("No environment variables to clear.");
+      return;
+    }
+    if (confirm("Are you absolutely sure you want to clear ALL global variables and secrets? This action cannot be undone.")) {
+      onGlobalsChange([]);
+      onSecretsChange([]);
+      setSelectedId(null);
+    }
+  };
+
+  const handleExport = () => {
+    const data = {
+      globals,
+      secrets,
+    };
+    navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+      .then(() => alert("Environment configuration copied to clipboard!"))
+      .catch((err) => alert(`Failed to copy to clipboard: ${err}`));
+  };
+
+  const handleImportSubmit = (mode: "merge" | "replace") => {
+    setImportError(null);
+    try {
+      const parsed = JSON.parse(importText.trim());
+      let importedGlobals: GlobalVar[] = [];
+      let importedSecrets: SecretVar[] = [];
+
+      if (Array.isArray(parsed)) {
+        // Flat array format
+        parsed.forEach((item: any) => {
+          if (item && typeof item === 'object' && typeof item.key === 'string' && typeof item.value === 'string') {
+            const type = item.type === 'secret' ? 'secret' : 'global';
+            const newItem = {
+              id: item.id || cryptoId(),
+              key: item.key.trim(),
+              value: item.value,
+            };
+            if (type === 'global') {
+              importedGlobals.push(newItem);
+            } else {
+              importedSecrets.push(newItem);
+            }
+          }
+        });
+      } else if (parsed && typeof parsed === 'object') {
+        // Nested format { globals: [...], secrets: [...] }
+        if (Array.isArray(parsed.globals)) {
+          parsed.globals.forEach((g: any) => {
+            if (g && typeof g === 'object' && typeof g.key === 'string' && typeof g.value === 'string') {
+              importedGlobals.push({
+                id: g.id || cryptoId(),
+                key: g.key.trim(),
+                value: g.value,
+              });
+            }
+          });
+        }
+        if (Array.isArray(parsed.secrets)) {
+          parsed.secrets.forEach((s: any) => {
+            if (s && typeof s === 'object' && typeof s.key === 'string' && typeof s.value === 'string') {
+              importedSecrets.push({
+                id: s.id || cryptoId(),
+                key: s.key.trim(),
+                value: s.value,
+              });
+            }
+          });
+        }
+      } else {
+        throw new Error("Invalid format. Expected a list or { globals, secrets } object.");
+      }
+
+      if (importedGlobals.length === 0 && importedSecrets.length === 0) {
+        throw new Error("No valid global variables or secrets found in the JSON.");
+      }
+
+      if (mode === "replace") {
+        onGlobalsChange(importedGlobals);
+        onSecretsChange(importedSecrets);
+        const remaining = [...importedGlobals.map((g) => g.id), ...importedSecrets.map((s) => s.id)];
+        setSelectedId(remaining[0] ?? null);
+      } else {
+        // Merge mode: keys must be unique. Update existing, append new.
+        const mergedGlobalsMap = new Map<string, GlobalVar>();
+        globals.forEach((g) => mergedGlobalsMap.set(g.key.toLowerCase(), g));
+        importedGlobals.forEach((ig) => {
+          mergedGlobalsMap.set(ig.key.toLowerCase(), ig);
+        });
+
+        const mergedSecretsMap = new Map<string, SecretVar>();
+        secrets.forEach((s) => mergedSecretsMap.set(s.key.toLowerCase(), s));
+        importedSecrets.forEach((is) => {
+          mergedSecretsMap.set(is.key.toLowerCase(), is);
+        });
+
+        const finalGlobals = Array.from(mergedGlobalsMap.values());
+        const finalSecrets = Array.from(mergedSecretsMap.values());
+
+        onGlobalsChange(finalGlobals);
+        onSecretsChange(finalSecrets);
+        const remaining = [...finalGlobals.map((g) => g.id), ...finalSecrets.map((s) => s.id)];
+        setSelectedId(remaining[0] ?? null);
+      }
+
+      setShowImportModal(false);
+      setImportText("");
+      alert(`Imported successfully (${importedGlobals.length} globals, ${importedSecrets.length} secrets).`);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Invalid JSON syntax");
+    }
+  };
+
   const toggleSecretVisibility = (id: string) => {
     setShowSecretMap((prev) => ({
       ...prev,
@@ -119,7 +254,7 @@ export function GlobalsManager({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[hsl(var(--ink)/0.35)] backdrop-blur-sm">
-      <div className="w-full max-w-3xl bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] flex flex-col h-[600px] max-h-[90vh]">
+      <div className="w-full max-w-3xl bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] flex flex-col h-[600px] max-h-[90vh] relative">
 
         {/* Header */}
         <div
@@ -147,6 +282,17 @@ export function GlobalsManager({
 
           {/* Sidebar */}
           <aside className="w-[220px] shrink-0 border-r border-dashed border-[hsl(var(--grid-line))] flex flex-col bg-[hsl(var(--paper))]">
+            {/* Search Input */}
+            <div className="p-2 border-b border-dashed border-[hsl(var(--grid-line))]">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search keys, values..."
+                className="w-full bg-transparent border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 px-2 font-mono text-[10px] text-[hsl(var(--ink))]"
+              />
+            </div>
+
             <div className="p-2 border-b border-dashed border-[hsl(var(--grid-line))] space-y-1">
               <button
                 onClick={() => addVariable("global")}
@@ -165,12 +311,12 @@ export function GlobalsManager({
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {items.length === 0 && (
+              {filteredItems.length === 0 && (
                 <div className="p-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] leading-relaxed text-center">
-                  No globals or secrets configured yet.
+                  {items.length === 0 ? "No variables configured yet." : "No matching variables found."}
                 </div>
               )}
-              {items.map((item) => {
+              {filteredItems.map((item) => {
                 const isSel = selectedId === item.id;
                 const bad = !!validateKey(item.key);
                 return (
@@ -201,6 +347,33 @@ export function GlobalsManager({
                   </button>
                 );
               })}
+            </div>
+
+            {/* Sidebar actions: Clear, Import, Export */}
+            <div className="p-2 border-t border-dashed border-[hsl(var(--grid-line))] space-y-1 bg-[hsl(var(--ink)/0.01)]">
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  onClick={handleExport}
+                  title="Export all to clipboard as JSON"
+                  className="w-full font-mono text-[9px] uppercase px-1.5 py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] text-center"
+                >
+                  Export
+                </button>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  title="Import from JSON"
+                  className="w-full font-mono text-[9px] uppercase px-1.5 py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] text-center"
+                >
+                  Import
+                </button>
+              </div>
+              <button
+                onClick={handleClearAll}
+                title="Wipe all variables and secrets"
+                className="w-full font-mono text-[9px] uppercase px-1.5 py-1 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] text-center"
+              >
+                Clear All
+              </button>
             </div>
           </aside>
 
@@ -341,6 +514,59 @@ export function GlobalsManager({
         </div>
 
       </div>
+
+      {/* Import Modal Overlay */}
+      {showImportModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-[hsl(var(--ink)/0.4)] backdrop-blur-xs">
+          <div className="w-[90%] max-w-lg bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] p-4 flex flex-col space-y-3">
+            <div className="flex justify-between items-center border-b border-dashed border-[hsl(var(--grid-line))] pb-2">
+              <span className="font-mono text-xs font-bold uppercase tracking-wider">Import Environment Variables</span>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportError(null);
+                  setImportText("");
+                }}
+                className="font-mono text-[10px] border border-dashed px-1.5 py-0.5 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+              >
+                Close
+              </button>
+            </div>
+            <p className="font-mono text-[10px] text-[hsl(var(--ink-soft))] leading-relaxed">
+              Paste a JSON array of variables, or an object in the format:
+              <code className="text-[hsl(var(--ink))] block bg-[hsl(var(--ink)/0.03)] p-1 mt-1 font-semibold">
+                {`{ "globals": [{ "key": "K", "value": "V" }], "secrets": [...] }`}
+              </code>
+            </p>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder='Paste JSON content here...'
+              rows={8}
+              className="w-full bg-transparent border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none p-2 font-mono text-[11px] text-[hsl(var(--ink))] resize-y"
+            />
+            {importError && (
+              <p className="text-[10px] text-[hsl(var(--issue))] font-mono">
+                ⚠ {importError}
+              </p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => handleImportSubmit("merge")}
+                className="flex-1 font-mono text-[10px] uppercase tracking-wider py-2 bg-[hsl(var(--ink))] text-[hsl(var(--paper))] hover:opacity-90 font-bold transition-all"
+              >
+                Merge-Import
+              </button>
+              <button
+                onClick={() => handleImportSubmit("replace")}
+                className="flex-1 font-mono text-[10px] uppercase tracking-wider py-2 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-all"
+              >
+                Replace-Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
