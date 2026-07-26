@@ -43,7 +43,7 @@ export interface RunOptions {
  * @param state The workflow execution state object.
  * @returns The fully interpolated template string.
  */
-function interpolate(
+export function interpolate(
   template: string,
   state: Record<string, unknown>,
   globals?: { key: string; value: string }[],
@@ -105,7 +105,7 @@ function getPath(obj: Record<string, unknown>, path: string): unknown {
  * @param errored A boolean indicating whether node execution threw an error.
  * @returns The selected Edge, or null if no outgoing edge matches the current condition.
  */
-function pickNextEdge(
+export function pickNextEdge(
   outgoing: Edge[],
   state: Record<string, unknown>,
   errored: boolean,
@@ -241,7 +241,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
  * @param gateways The list of user-configured gateway profiles.
  * @returns A promise resolving to the output payload produced by the node.
  */
-async function runNode(
+export async function runNode(
   node: Node<AgentNodeData>,
   state: Record<string, unknown>,
   gateways: Gateway[],
@@ -424,7 +424,7 @@ async function runNode(
  * @param gateways The array of all configured gateway profiles.
  * @returns The selected Gateway configuration, or null if no gateways exist.
  */
-function pickGateway(node: Node<AgentNodeData>, gateways: Gateway[]): Gateway | null {
+export function pickGateway(node: Node<AgentNodeData>, gateways: Gateway[]): Gateway | null {
   if (gateways.length === 0) return null;
   const id = node.data.gatewayId;
   if (id) {

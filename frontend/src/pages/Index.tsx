@@ -36,7 +36,7 @@ import {
   validateGateway,
 } from "@/flow/gateways";
 import { GatewayManager } from "@/flow/GatewayManager";
-import { runFlow, RunLog } from "@/flow/runFlow";
+import { runFlow, RunLog, runNode, pickNextEdge } from "@/flow/runFlow";
 import { IntroTutorial } from "@/flow/IntroTutorial";
 import { SampleWalkthrough } from "@/flow/SampleWalkthrough";
 import {
@@ -48,6 +48,15 @@ import {
   saveSecrets,
 } from "@/flow/globals";
 import { GlobalsManager } from "@/flow/GlobalsManager";
+import {
+  Workflow,
+  loadWorkflows,
+  saveWorkflows,
+  loadActiveWorkflowId,
+  saveActiveWorkflowId,
+  TEMPLATES,
+} from "@/flow/workflows";
+import { WorkflowsManager } from "@/flow/WorkflowsManager";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -58,8 +67,30 @@ function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
 
-  const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(exampleNodes);
-  const [edges, setEdges] = useState<Edge[]>(exampleEdges);
+  // ---- Workflows Library State ----
+  const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
+  const [showWorkflows, setShowWorkflows] = useState(false);
+
+  // Initialize nodes and edges based on active workflow id
+  const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
+    const activeId = loadActiveWorkflowId();
+    if (activeId) {
+      const found = [...TEMPLATES, ...loadWorkflows()].find((w) => w.id === activeId);
+      if (found) return found.nodes;
+    }
+    return exampleNodes;
+  });
+
+  const [edges, setEdges] = useState<Edge[]>(() => {
+    const activeId = loadActiveWorkflowId();
+    if (activeId) {
+      const found = [...TEMPLATES, ...loadWorkflows()].find((w) => w.id === activeId);
+      if (found) return found.edges;
+    }
+    return exampleEdges;
+  });
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
@@ -86,6 +117,18 @@ function Canvas() {
     resolve: (value: string) => void;
   } | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
+
+  // ---- Stepper Debugger State ----
+  const [stepMode, setStepMode] = useState(false);
+  const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set());
+  const [stepperSession, setStepperSession] = useState<{
+    currentNodeId: string | null;
+    step: number;
+    state: Record<string, unknown>;
+    history: RunLog[];
+    status: "idle" | "paused" | "executing" | "completed" | "errored";
+    prevEdgeLabel: string;
+  } | null>(null);
 
   // Run logs filtering and detail toggles state
   const [logsSearchQuery, setLogsSearchQuery] = useState("");
@@ -127,6 +170,60 @@ function Canvas() {
   useEffect(() => {
     saveSecrets(secrets);
   }, [secrets]);
+
+  // Persist workflows state to local storage when changed
+  useEffect(() => {
+    saveWorkflows(workflows);
+  }, [workflows]);
+
+  // Handle active workflow load / switch
+  const handleSelectWorkflow = useCallback((id: string | null) => {
+    setActiveWorkflowId(id);
+    saveActiveWorkflowId(id);
+    if (id) {
+      const found = [...TEMPLATES, ...workflows].find((w) => w.id === id);
+      if (found) {
+        setNodes(found.nodes);
+        setEdges(found.edges);
+        setIssues([]);
+        setValidated(false);
+        setSelectedId(null);
+        setSelectedEdgeId(null);
+      }
+    } else {
+      setNodes(exampleNodes);
+      setEdges(exampleEdges);
+      setIssues([]);
+      setValidated(false);
+      setSelectedId(null);
+      setSelectedEdgeId(null);
+    }
+  }, [workflows]);
+
+  // Autosave current canvas nodes/edges changes back into the active customized workflow (non-template)
+  useEffect(() => {
+    if (!activeWorkflowId) return;
+    const isTemp = TEMPLATES.some((t) => t.id === activeWorkflowId);
+    if (isTemp) return; // templates are read-only
+
+    setWorkflows((prev) => {
+      const match = prev.find((w) => w.id === activeWorkflowId);
+      if (!match) return prev;
+
+      // Compare to see if there is any real change before updating to avoid loops
+      const hasNodesChanged = JSON.stringify(match.nodes) !== JSON.stringify(nodes);
+      const hasEdgesChanged = JSON.stringify(match.edges) !== JSON.stringify(edges);
+
+      if (hasNodesChanged || hasEdgesChanged) {
+        return prev.map((w) =>
+          w.id === activeWorkflowId
+            ? { ...w, nodes, edges, updatedAt: Date.now() }
+            : w
+        );
+      }
+      return prev;
+    });
+  }, [nodes, edges, activeWorkflowId]);
 
   const [showSample, setShowSample] = useState(false);
   const [highlight, setHighlight] = useState<{
@@ -550,7 +647,436 @@ function Canvas() {
     else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
   }, [nodes, edges]);
 
+  // Toggle breakpoint for a specific node
+  const toggleBreakpoint = useCallback((nodeId: string) => {
+    setBreakpoints((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+        toast(`Breakpoint removed from ${nodeId}`);
+      } else {
+        next.add(nodeId);
+        toast(`Breakpoint added to ${nodeId}`);
+      }
+      return next;
+    });
+  }, []);
+
+  // Initialize a stepper session
+  const initStepper = useCallback(() => {
+    if (gatewayInvalid) {
+      const first = gatewayIssues[0];
+      toast.error(`Gateway invalid — ${first}`);
+      setShowGateway(true);
+      return;
+    }
+
+    if (pendingApproval) {
+      pendingApproval.resolve("aborted");
+      setPendingApproval(null);
+    }
+    setFeedbackText("");
+
+    let parsedState = { query: "hello world" };
+    if (initialStateStr.trim()) {
+      try {
+        const parsed = JSON.parse(initialStateStr);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          parsedState = parsed;
+        } else {
+          toast.error("Initial state must be a JSON object. Using fallback.");
+        }
+      } catch (e) {
+        toast.error("Invalid JSON in Initial State. Using fallback.");
+      }
+    }
+
+    const entry =
+      nodes.find((n) => n.data.isEntry) ??
+      nodes.find((n) => n.data.kind === "trigger") ??
+      nodes[0];
+    if (!entry) {
+      toast.error("No entry node found to start stepper");
+      return;
+    }
+
+    setRunning(true);
+    setShowRun(true);
+    setRunLogs([]);
+
+    setStepperSession({
+      currentNodeId: entry.id,
+      step: 0,
+      state: parsedState,
+      history: [],
+      status: "paused",
+      prevEdgeLabel: "start",
+    });
+
+    setHighlight({
+      nodeIds: new Set([entry.id]),
+      edgeIds: new Set(),
+      color: "hsl(var(--edge-selected))",
+    });
+
+    toast(`Debugger session started at node "${entry.data.name}"`);
+  }, [nodes, gatewayInvalid, gatewayIssues, initialStateStr, pendingApproval]);
+
+  // Execute a single step forward in the active stepper session
+  const stepForward = useCallback(async (currentSession = stepperSession) => {
+    if (!currentSession || !currentSession.currentNodeId) return;
+    const { currentNodeId, step, state, history, prevEdgeLabel } = currentSession;
+
+    const node = nodes.find((n) => n.id === currentNodeId);
+    if (!node) {
+      toast.error(`Node ${currentNodeId} not found in graph`);
+      return;
+    }
+
+    setStepperSession((prev) => prev ? { ...prev, status: "executing" } : null);
+
+    const t0 = performance.now();
+    let output: unknown;
+    let error: string | undefined;
+    state.__last_kind = node.data.kind;
+    delete state.__router_branch;
+
+    try {
+      const approvalPromise = ({ nodeId, name, prompt, channel }: { nodeId: string; name: string; prompt: string; channel: string }) => {
+        return new Promise<string>((resolve) => {
+          setPendingApproval({
+            nodeId,
+            name,
+            prompt,
+            channel,
+            resolve,
+          });
+        });
+      };
+      output = await runNode(
+        node,
+        state,
+        gateways,
+        {
+          nodes,
+          edges,
+          gateways,
+          onHumanApproval: approvalPromise,
+        },
+        globals,
+        secrets
+      );
+      if (output !== undefined) state.last_output = output;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+
+    const ms = Math.round(performance.now() - t0);
+    let stateSnapshot: Record<string, unknown> | undefined;
+    try {
+      stateSnapshot = JSON.parse(JSON.stringify(state));
+    } catch {
+      stateSnapshot = { ...state };
+    }
+
+    const log: RunLog = {
+      step: step + 1,
+      nodeId: currentNodeId,
+      name: node.data.name,
+      kind: node.data.kind,
+      label: prevEdgeLabel,
+      output,
+      error,
+      ms,
+      stateSnapshot,
+    };
+
+    const nextHistory = [...history, log];
+    setRunLogs(nextHistory);
+
+    if (error) {
+      toast.error(`Node "${node.data.name}" execution failed`);
+      setStepperSession({
+        currentNodeId: null,
+        step: step + 1,
+        state,
+        history: nextHistory,
+        status: "errored",
+        prevEdgeLabel,
+      });
+      setRunning(false);
+      setPendingApproval(null);
+      setFeedbackText("");
+      setTimeout(() => setHighlight(null), 1500);
+      return;
+    }
+
+    if (node.data.isTerminal || node.data.kind === "sink") {
+      toast.success("Flow execution completed successfully");
+      setStepperSession({
+        currentNodeId: null,
+        step: step + 1,
+        state,
+        history: nextHistory,
+        status: "completed",
+        prevEdgeLabel,
+      });
+      setRunning(false);
+      setPendingApproval(null);
+      setFeedbackText("");
+      setTimeout(() => setHighlight(null), 1500);
+      return;
+    }
+
+    const outs = edges.filter((e) => e.source === currentNodeId);
+    const nextEdge = pickNextEdge(outs, state, !!error);
+    if (!nextEdge) {
+      toast.success("Halted: No matching outgoing edge found");
+      setStepperSession({
+        currentNodeId: null,
+        step: step + 1,
+        state,
+        history: nextHistory,
+        status: "completed",
+        prevEdgeLabel,
+      });
+      setRunning(false);
+      setPendingApproval(null);
+      setFeedbackText("");
+      setTimeout(() => setHighlight(null), 1500);
+      return;
+    }
+
+    const nextNode = nodes.find((n) => n.id === nextEdge.target);
+    if (!nextNode) {
+      toast.error(`Target node ${nextEdge.target} missing`);
+      setStepperSession({
+        currentNodeId: null,
+        step: step + 1,
+        state,
+        history: nextHistory,
+        status: "errored",
+        prevEdgeLabel,
+      });
+      setRunning(false);
+      setPendingApproval(null);
+      setFeedbackText("");
+      setTimeout(() => setHighlight(null), 1500);
+      return;
+    }
+
+    const nextEdgeLabel = String(nextEdge.label ?? "next");
+    const sessionUpdate = {
+      currentNodeId: nextNode.id,
+      step: step + 1,
+      state,
+      history: nextHistory,
+      status: "paused" as const,
+      prevEdgeLabel: nextEdgeLabel,
+    };
+    setStepperSession(sessionUpdate);
+
+    setHighlight({
+      nodeIds: new Set([nextNode.id]),
+      edgeIds: new Set([nextEdge.id]),
+      color: "hsl(var(--edge-selected))",
+    });
+
+    toast(`Paused at next node "${nextNode.data.name}"`);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession]);
+
+  // Stop debugger and reset stepper
+  const stopStepper = useCallback(() => {
+    setStepperSession(null);
+    setRunning(false);
+    setHighlight(null);
+    if (pendingApproval) {
+      pendingApproval.resolve("aborted");
+      setPendingApproval(null);
+    }
+    setFeedbackText("");
+    toast("Debugger session stopped");
+  }, [pendingApproval]);
+
+  // Resume full-speed auto execution starting from current debugger position, respecting breakpoints
+  const resumeStepper = useCallback(async () => {
+    if (!stepperSession || !stepperSession.currentNodeId) return;
+    toast("Resuming flow execution...");
+
+    let curId: string | null = stepperSession.currentNodeId;
+    let curStep: number = stepperSession.step;
+    let curState: Record<string, unknown> = stepperSession.state;
+    let curHistory: RunLog[] = stepperSession.history;
+    let curPrevEdgeLabel: string = stepperSession.prevEdgeLabel;
+
+    while (curId) {
+      // Respect Breakpoints
+      if (breakpoints.has(curId) && curStep !== stepperSession.step) {
+        const nextNode = nodes.find((n) => n.id === curId);
+        const sessionUpdate = {
+          currentNodeId: curId,
+          step: curStep,
+          state: curState,
+          history: curHistory,
+          status: "paused" as const,
+          prevEdgeLabel: curPrevEdgeLabel,
+        };
+        setStepperSession(sessionUpdate);
+        setHighlight({
+          nodeIds: new Set([curId]),
+          edgeIds: new Set(),
+          color: "hsl(var(--edge-selected))",
+        });
+        toast(`Breakpoint hit at node "${nextNode?.data.name}"`);
+        return;
+      }
+
+      const node = nodes.find((n) => n.id === curId);
+      if (!node) break;
+
+      const t0 = performance.now();
+      let output: unknown;
+      let error: string | undefined;
+      curState.__last_kind = node.data.kind;
+      delete curState.__router_branch;
+
+      try {
+        const approvalPromise = ({ nodeId, name, prompt, channel }: { nodeId: string; name: string; prompt: string; channel: string }) => {
+          return new Promise<string>((resolve) => {
+            setPendingApproval({
+              nodeId,
+              name,
+              prompt,
+              channel,
+              resolve,
+            });
+          });
+        };
+        output = await runNode(
+          node,
+          curState,
+          gateways,
+          {
+            nodes,
+            edges,
+            gateways,
+            onHumanApproval: approvalPromise,
+          },
+          globals,
+          secrets
+        );
+        if (output !== undefined) curState.last_output = output;
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+
+      const ms = Math.round(performance.now() - t0);
+      let stateSnapshot: Record<string, unknown> | undefined;
+      try {
+        stateSnapshot = JSON.parse(JSON.stringify(curState));
+      } catch {
+        stateSnapshot = { ...curState };
+      }
+
+      const log: RunLog = {
+        step: curStep + 1,
+        nodeId: curId,
+        name: node.data.name,
+        kind: node.data.kind,
+        label: curPrevEdgeLabel,
+        output,
+        error,
+        ms,
+        stateSnapshot,
+      };
+
+      curHistory = [...curHistory, log];
+      setRunLogs(curHistory);
+
+      if (error) {
+        toast.error(`Node "${node.data.name}" execution failed`);
+        setStepperSession({
+          currentNodeId: null,
+          step: curStep + 1,
+          state: curState,
+          history: curHistory,
+          status: "errored",
+          prevEdgeLabel: curPrevEdgeLabel,
+        });
+        setRunning(false);
+        setPendingApproval(null);
+        setFeedbackText("");
+        setTimeout(() => setHighlight(null), 1500);
+        return;
+      }
+
+      if (node.data.isTerminal || node.data.kind === "sink") {
+        toast.success("Flow execution completed successfully");
+        setStepperSession({
+          currentNodeId: null,
+          step: curStep + 1,
+          state: curState,
+          history: curHistory,
+          status: "completed",
+          prevEdgeLabel: curPrevEdgeLabel,
+        });
+        setRunning(false);
+        setPendingApproval(null);
+        setFeedbackText("");
+        setTimeout(() => setHighlight(null), 1500);
+        return;
+      }
+
+      const outs = edges.filter((e) => e.source === curId);
+      const nextEdge = pickNextEdge(outs, curState, !!error);
+      if (!nextEdge) {
+        toast.success("Halted: No matching outgoing edge found");
+        setStepperSession({
+          currentNodeId: null,
+          step: curStep + 1,
+          state: curState,
+          history: curHistory,
+          status: "completed",
+          prevEdgeLabel: curPrevEdgeLabel,
+        });
+        setRunning(false);
+        setPendingApproval(null);
+        setFeedbackText("");
+        setTimeout(() => setHighlight(null), 1500);
+        return;
+      }
+
+      const nextNode = nodes.find((n) => n.id === nextEdge.target);
+      if (!nextNode) {
+        toast.error(`Target node ${nextEdge.target} missing`);
+        setStepperSession({
+          currentNodeId: null,
+          step: curStep + 1,
+          state: curState,
+          history: curHistory,
+          status: "errored",
+          prevEdgeLabel: curPrevEdgeLabel,
+        });
+        setRunning(false);
+        setPendingApproval(null);
+        setFeedbackText("");
+        setTimeout(() => setHighlight(null), 1500);
+        return;
+      }
+
+      curId = nextNode.id;
+      curStep++;
+      curPrevEdgeLabel = String(nextEdge.label ?? "next");
+    }
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints]);
+
   const runFlowAction = useCallback(async () => {
+    // If stepMode is active, trigger stepper initialization instead of full auto run
+    if (stepMode) {
+      initStepper();
+      return;
+    }
+
     if (gatewayInvalid) {
       const first = gatewayIssues[0];
       toast.error(`Gateway invalid — ${first}`);
@@ -639,7 +1165,7 @@ function Canvas() {
         setHighlight(null);
       }, 1500);
     }
-  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -750,6 +1276,14 @@ function Canvas() {
           >
             <span className="hidden sm:inline">⚙ gateways{gatewayInvalid ? " ⚠" : ` · ${gateways.length}`}</span>
             <span className="sm:hidden">⚙{gatewayInvalid ? "⚠" : ""}</span>
+          </button>
+          <button
+            onClick={() => setShowWorkflows(true)}
+            title="Open workflows library to create, load, import, or duplicate customized workflows and templates"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">📁 workflows · {[...TEMPLATES, ...workflows].length}</span>
+            <span className="sm:hidden">📁 {[...TEMPLATES, ...workflows].length}</span>
           </button>
           <button
             onClick={() => setShowGlobals(true)}
@@ -1209,6 +1743,112 @@ function Canvas() {
               </div>
             </div>
 
+            {/* Stepper Debugger Controls */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                  Interactive Debugger / Stepper
+                </span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={stepMode}
+                    disabled={running && !stepperSession}
+                    onChange={(e) => {
+                      setStepMode(e.target.checked);
+                      if (!e.target.checked) stopStepper();
+                    }}
+                    className="accent-[hsl(var(--ink))]"
+                  />
+                  <span className="font-mono text-[10px] uppercase text-[hsl(var(--ink-soft))]">
+                    Enable
+                  </span>
+                </label>
+              </div>
+
+              {stepMode && (
+                <div className="space-y-2 pt-1.5 border-t border-dashed border-[hsl(var(--grid-line))]">
+                  {!stepperSession ? (
+                    <button
+                      type="button"
+                      onClick={initStepper}
+                      className="w-full font-mono text-[10px] uppercase tracking-wider py-1.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+                    >
+                      Start Debugging Session
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center bg-[hsl(var(--ink)/0.04)] p-1.5 border border-dashed border-[hsl(var(--grid-line))]">
+                        <span className="font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--ink-soft))]">
+                          Status: <span className="font-bold text-[hsl(var(--ink))]">{stepperSession.status}</span>
+                        </span>
+                        {stepperSession.currentNodeId && (
+                          <span className="font-mono text-[9px] font-bold text-[hsl(var(--edge-selected))] truncate max-w-[200px]">
+                            @ {nodes.find((n) => n.id === stepperSession.currentNodeId)?.data.name || stepperSession.currentNodeId}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1">
+                        <button
+                          type="button"
+                          disabled={stepperSession.status !== "paused"}
+                          onClick={() => stepForward()}
+                          className="font-mono text-[9px] uppercase tracking-wider py-1.5 bg-[hsl(var(--ink))] text-[hsl(var(--paper))] hover:opacity-90 disabled:opacity-40 transition-opacity"
+                        >
+                          Step Next
+                        </button>
+                        <button
+                          type="button"
+                          disabled={stepperSession.status !== "paused"}
+                          onClick={resumeStepper}
+                          className="font-mono text-[9px] uppercase tracking-wider py-1.5 bg-[hsl(var(--edge-selected))] text-[hsl(var(--paper))] hover:opacity-90 disabled:opacity-40 transition-opacity"
+                        >
+                          Resume
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopStepper}
+                          className="font-mono text-[9px] uppercase tracking-wider py-1.5 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-all"
+                        >
+                          Stop
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Breakpoint selection list */}
+                  <div className="pt-1.5">
+                    <span className="font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--ink-soft))] block mb-1">
+                      Breakpoints (Click to toggle pause point)
+                    </span>
+                    <div className="max-h-24 overflow-y-auto border border-dashed border-[hsl(var(--grid-line))] p-1 space-y-1 bg-[hsl(var(--paper))]">
+                      {nodes.map((n) => {
+                        const hasBp = breakpoints.has(n.id);
+                        return (
+                          <button
+                            key={n.id}
+                            type="button"
+                            onClick={() => toggleBreakpoint(n.id)}
+                            className={`w-full text-left font-mono text-[9px] px-1.5 py-0.5 flex items-center justify-between border border-transparent ${
+                              hasBp
+                                ? "bg-[hsl(var(--issue)/0.08)] text-[hsl(var(--issue))] font-bold border-dashed border-[hsl(var(--issue)/0.3)]"
+                                : "hover:bg-[hsl(var(--ink)/0.04)] text-[hsl(var(--ink-soft))]"
+                            }`}
+                          >
+                            <span>{n.data.name} ({n.id})</span>
+                            <span className="text-[8px] uppercase tracking-widest">
+                              {hasBp ? "● breakpoint" : "○ click to set"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {pendingApproval && (
               <div className="border-2 border-[hsl(var(--accent-deep))] p-3 space-y-2 bg-[hsl(var(--accent-deep)/0.03)] animate-pulse shadow-md mb-2">
                 <div className="flex items-center gap-2">
@@ -1404,6 +2044,18 @@ function Canvas() {
           onGlobalsChange={setGlobals}
           onSecretsChange={setSecrets}
           onClose={() => setShowGlobals(false)}
+        />
+      )}
+
+      {showWorkflows && (
+        <WorkflowsManager
+          workflows={workflows}
+          activeWorkflowId={activeWorkflowId}
+          currentNodes={nodes}
+          currentEdges={edges}
+          onSelectWorkflow={handleSelectWorkflow}
+          onWorkflowsChange={setWorkflows}
+          onClose={() => setShowWorkflows(false)}
         />
       )}
 
