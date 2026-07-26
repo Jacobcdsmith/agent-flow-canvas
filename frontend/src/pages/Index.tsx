@@ -87,6 +87,10 @@ function Canvas() {
   } | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
 
+  // Run logs filtering and detail toggles state
+  const [logsSearchQuery, setLogsSearchQuery] = useState("");
+  const [expandedLogSnapshots, setExpandedLogSnapshots] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     try {
       if (initialStateStr.trim()) {
@@ -645,6 +649,60 @@ function Canvas() {
     setValidated(false);
     setSelectedEdgeId(null);
   }, [snapshot]);
+
+  // Expand / Collapse and Clear logs actions
+  const handleLogsExpandAll = () => {
+    if (!runLogs) return;
+    const patch: Record<string, boolean> = {};
+    runLogs.forEach((l) => {
+      if (l.stateSnapshot) {
+        patch[`${l.step}-${l.nodeId}`] = true;
+      }
+    });
+    setExpandedLogSnapshots(patch);
+  };
+
+  const handleLogsCollapseAll = () => {
+    setExpandedLogSnapshots({});
+  };
+
+  const handleClearLogs = () => {
+    setRunLogs(null);
+    setExpandedLogSnapshots({});
+  };
+
+  const handleExportLogs = () => {
+    if (!runLogs || runLogs.length === 0) {
+      toast.error("No logs to export");
+      return;
+    }
+    const data = JSON.stringify(runLogs, null, 2);
+    const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "agent_flow_run_logs.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Logs downloaded");
+  };
+
+  const filteredLogs = useMemo(() => {
+    if (!runLogs) return [];
+    const query = logsSearchQuery.trim().toLowerCase();
+    if (!query) return runLogs;
+    return runLogs.filter((l) => {
+      const matchesName = l.name.toLowerCase().includes(query);
+      const matchesKind = l.kind.toLowerCase().includes(query);
+      const matchesError = l.error ? l.error.toLowerCase().includes(query) : false;
+      const matchesOutput = l.output
+        ? (typeof l.output === "string"
+            ? l.output.toLowerCase().includes(query)
+            : JSON.stringify(l.output).toLowerCase().includes(query))
+        : false;
+      return matchesName || matchesKind || matchesError || matchesOutput;
+    });
+  }, [runLogs, logsSearchQuery]);
 
   return (
     <div
@@ -1219,46 +1277,110 @@ function Canvas() {
                 executing in browser…
               </div>
             )}
+
+            {/* Run logs management header/tools */}
+            {runLogs && runLogs.length > 0 && (
+              <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold block">
+                  Log Utilities
+                </span>
+                <input
+                  type="text"
+                  value={logsSearchQuery}
+                  onChange={(e) => setLogsSearchQuery(e.target.value)}
+                  placeholder="Filter logs by name, output, error..."
+                  className="w-full bg-transparent border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 px-2 font-mono text-[10px] text-[hsl(var(--ink))] mb-1"
+                />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleLogsExpandAll}
+                    className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Expand Snapshots
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogsCollapseAll}
+                    className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Collapse Snapshots
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleExportLogs}
+                    className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Export Logs JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearLogs}
+                    className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Clear Logs
+                  </button>
+                </div>
+              </div>
+            )}
+
             {runLogs && runLogs.length === 0 && !running && (
               <div className="font-mono text-[10px] text-[hsl(var(--issue))] uppercase tracking-[0.15em]">
                 no logs — see toast for error
               </div>
             )}
-            {runLogs?.map((l) => (
-              <div
-                key={`${l.step}-${l.nodeId}`}
-                className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
-                style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
-                  <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
-                  <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
-                  <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
-                </div>
-                <div className="text-[hsl(var(--ink-soft))]">
-                  → <span className="uppercase tracking-wider">{l.label}</span>
-                </div>
-                {l.error ? (
-                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
-                ) : (
-                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
-{typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
-                  </pre>
-                )}
-                {l.stateSnapshot && (
-                  <details className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5 group">
-                    <summary className="cursor-pointer select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] list-none flex items-center gap-1 [&::-webkit-details-marker]:hidden">
-                      <span className="transition-transform duration-100 group-open:rotate-90">▶</span>
-                      <span className="uppercase tracking-[0.1em] text-[9px]">state snapshot</span>
-                    </summary>
-                    <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
-{JSON.stringify(l.stateSnapshot, null, 2)}
+            {filteredLogs.map((l) => {
+              const uniqueKey = `${l.step}-${l.nodeId}`;
+              const isExpanded = !!expandedLogSnapshots[uniqueKey];
+              return (
+                <div
+                  key={uniqueKey}
+                  className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
+                  style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
+                    <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
+                    <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
+                    <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
+                  </div>
+                  <div className="text-[hsl(var(--ink-soft))]">
+                    → <span className="uppercase tracking-wider">{l.label}</span>
+                  </div>
+                  {l.error ? (
+                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
+                  ) : (
+                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+  {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
                     </pre>
-                  </details>
-                )}
-              </div>
-            ))}
+                  )}
+                  {l.stateSnapshot && (
+                    <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedLogSnapshots((prev) => ({
+                            ...prev,
+                            [uniqueKey]: !prev[uniqueKey],
+                          }));
+                        }}
+                        className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                      >
+                        <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                        <span>state snapshot</span>
+                      </button>
+                      {isExpanded && (
+                        <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+  {JSON.stringify(l.stateSnapshot, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
