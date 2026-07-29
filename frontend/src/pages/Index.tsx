@@ -48,6 +48,16 @@ import {
   saveSecrets,
 } from "@/flow/globals";
 import { GlobalsManager } from "@/flow/GlobalsManager";
+import {
+  SavedWorkflow,
+  loadWorkflows,
+  saveWorkflows,
+  getActiveWorkflowId,
+  setActiveWorkflowId,
+  TEMPLATES,
+  cryptoId,
+} from "@/flow/workflows";
+import { WorkflowsManager } from "@/flow/WorkflowsManager";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -58,8 +68,53 @@ function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
 
-  const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(exampleNodes);
-  const [edges, setEdges] = useState<Edge[]>(exampleEdges);
+  // Workflows state
+  const [workflows, setWorkflows] = useState<SavedWorkflow[]>(() => loadWorkflows());
+  const [activeWorkflowId, setActiveWorkflowIdState] = useState<string | null>(() => getActiveWorkflowId());
+  const [showWorkflows, setShowWorkflows] = useState(false);
+
+  // Initialize nodes and edges with either the active workflow, the first custom workflow, the ReAct template, or fallback to exampleNodes
+  const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
+    const activeId = getActiveWorkflowId();
+    if (activeId) {
+      if (activeId.startsWith("template-")) {
+        const foundTpl = TEMPLATES.find((t) => t.id === activeId);
+        if (foundTpl) return JSON.parse(JSON.stringify(foundTpl.nodes));
+      } else {
+        const list = loadWorkflows();
+        const found = list.find((w) => w.id === activeId);
+        if (found) return found.nodes;
+      }
+    }
+    // If no active workflow, default to ReAct Loop template
+    const defaultTpl = TEMPLATES.find((t) => t.id === "template-react-loop");
+    if (defaultTpl) {
+      // Set active workflow ID to default template
+      setActiveWorkflowId("template-react-loop");
+      return JSON.parse(JSON.stringify(defaultTpl.nodes));
+    }
+    return exampleNodes;
+  });
+
+  const [edges, setEdges] = useState<Edge[]>(() => {
+    const activeId = getActiveWorkflowId();
+    if (activeId) {
+      if (activeId.startsWith("template-")) {
+        const foundTpl = TEMPLATES.find((t) => t.id === activeId);
+        if (foundTpl) return JSON.parse(JSON.stringify(foundTpl.edges));
+      } else {
+        const list = loadWorkflows();
+        const found = list.find((w) => w.id === activeId);
+        if (found) return found.edges;
+      }
+    }
+    const defaultTpl = TEMPLATES.find((t) => t.id === "template-react-loop");
+    if (defaultTpl) {
+      return JSON.parse(JSON.stringify(defaultTpl.edges));
+    }
+    return exampleEdges;
+  });
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
@@ -127,6 +182,29 @@ function Canvas() {
   useEffect(() => {
     saveSecrets(secrets);
   }, [secrets]);
+
+  // Persist workflows when updated
+  useEffect(() => {
+    saveWorkflows(workflows);
+  }, [workflows]);
+
+  // Handle autosave: whenever nodes or edges change, update the active workflow if it's custom (non-template)
+  useEffect(() => {
+    if (activeWorkflowId && !activeWorkflowId.startsWith("template-")) {
+      setWorkflows((prev) =>
+        prev.map((w) =>
+          w.id === activeWorkflowId
+            ? {
+                ...w,
+                nodes,
+                edges,
+                updatedAt: new Date().toISOString(),
+              }
+            : w
+        )
+      );
+    }
+  }, [nodes, edges, activeWorkflowId]);
 
   const [showSample, setShowSample] = useState(false);
   const [highlight, setHighlight] = useState<{
@@ -288,6 +366,26 @@ function Canvas() {
       toast("Edge added");
     },
     [snapshot],
+  );
+
+  const getCurrentGraph = useCallback(() => {
+    return { nodes, edges };
+  }, [nodes, edges]);
+
+  const handleSelectWorkflow = useCallback(
+    (id: string, nextNodes: Node<AgentNodeData>[], nextEdges: Edge[]) => {
+      snapshot();
+      setActiveWorkflowIdState(id);
+      setActiveWorkflowId(id);
+      setNodes(JSON.parse(JSON.stringify(nextNodes)));
+      setEdges(JSON.parse(JSON.stringify(nextEdges)));
+      setIssues([]);
+      setValidated(false);
+      setSelectedId(null);
+      setSelectedEdgeId(null);
+      toast.success("Workflow loaded successfully");
+    },
+    [snapshot]
   );
 
   const addNode = useCallback(
@@ -758,6 +856,14 @@ function Canvas() {
           >
             <span className="hidden sm:inline">⚙ globals · {globals.length + secrets.length}</span>
             <span className="sm:hidden">⚙g · {globals.length + secrets.length}</span>
+          </button>
+          <button
+            onClick={() => setShowWorkflows(true)}
+            title="Open Workflows Library to load standard templates or custom workflows"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">📂 workflows</span>
+            <span className="sm:hidden">📂</span>
           </button>
           <button
             onClick={() => setShowSample(true)}
@@ -1404,6 +1510,17 @@ function Canvas() {
           onGlobalsChange={setGlobals}
           onSecretsChange={setSecrets}
           onClose={() => setShowGlobals(false)}
+        />
+      )}
+
+      {showWorkflows && (
+        <WorkflowsManager
+          workflows={workflows}
+          activeWorkflowId={activeWorkflowId}
+          onWorkflowsChange={setWorkflows}
+          onSelectWorkflow={handleSelectWorkflow}
+          onClose={() => setShowWorkflows(false)}
+          getCurrentGraph={getCurrentGraph}
         />
       )}
 
