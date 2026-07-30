@@ -57,6 +57,11 @@ import {
   TEMPLATES,
 } from "@/flow/workflows";
 import { WorkflowsManager } from "@/flow/WorkflowsManager";
+import {
+  StatePreset,
+  loadStatePresets,
+  saveStatePresets,
+} from "@/flow/statePresets";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -104,8 +109,24 @@ function Canvas() {
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
+
+  // ---- State Presets State ----
+  const [presets, setPresets] = useState<StatePreset[]>(() => {
+    const activeId = loadActiveWorkflowId();
+    return loadStatePresets(activeId);
+  });
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(() => {
+    const activeId = loadActiveWorkflowId();
+    const loaded = loadStatePresets(activeId);
+    return loaded.length > 0 ? loaded[0].id : "";
+  });
+  const [showSavePresetForm, setShowSavePresetForm] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+
   const [initialStateStr, setInitialStateStr] = useState(() => {
-    return JSON.stringify({ query: "hello world" }, null, 2);
+    const activeId = loadActiveWorkflowId();
+    const loaded = loadStatePresets(activeId);
+    return loaded.length > 0 ? loaded[0].stateJson : JSON.stringify({ query: "hello world" }, null, 2);
   });
   const [initialStateError, setInitialStateError] = useState<string | null>(null);
   const [visualSpeed, setVisualSpeed] = useState<"fast" | "visualized">("visualized");
@@ -199,6 +220,73 @@ function Canvas() {
       setSelectedEdgeId(null);
     }
   }, [workflows]);
+
+  // Sync state presets when active workflow ID changes
+  useEffect(() => {
+    const loaded = loadStatePresets(activeWorkflowId);
+    setPresets(loaded);
+    if (loaded.length > 0) {
+      setSelectedPresetId(loaded[0].id);
+      setInitialStateStr(loaded[0].stateJson);
+    } else {
+      setSelectedPresetId("");
+    }
+    setShowSavePresetForm(false);
+    setNewPresetName("");
+  }, [activeWorkflowId]);
+
+  const handleSavePreset = useCallback(() => {
+    if (!newPresetName.trim()) {
+      toast.error("Preset name cannot be empty");
+      return;
+    }
+    try {
+      JSON.parse(initialStateStr);
+    } catch {
+      toast.error("Cannot save invalid JSON as a preset");
+      return;
+    }
+
+    const newPreset: StatePreset = {
+      id: "preset_" + Math.random().toString(36).slice(2, 10),
+      name: newPresetName.trim(),
+      stateJson: initialStateStr,
+    };
+
+    const nextPresets = [...presets, newPreset];
+    setPresets(nextPresets);
+    saveStatePresets(activeWorkflowId, nextPresets);
+    setSelectedPresetId(newPreset.id);
+    setShowSavePresetForm(false);
+    setNewPresetName("");
+    toast.success(`Preset "${newPreset.name}" saved`);
+  }, [newPresetName, initialStateStr, presets, activeWorkflowId]);
+
+  const handleDeletePreset = useCallback(() => {
+    if (!selectedPresetId) return;
+    const target = presets.find(p => p.id === selectedPresetId);
+    if (!target) return;
+    if (target.isDefault) {
+      toast.error("Built-in presets cannot be deleted");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete the preset "${target.name}"?`)) {
+      return;
+    }
+
+    const nextPresets = presets.filter(p => p.id !== selectedPresetId);
+    setPresets(nextPresets);
+    saveStatePresets(activeWorkflowId, nextPresets);
+
+    if (nextPresets.length > 0) {
+      setSelectedPresetId(nextPresets[0].id);
+      setInitialStateStr(nextPresets[0].stateJson);
+    } else {
+      setSelectedPresetId("");
+    }
+    toast.success(`Preset "${target.name}" deleted`);
+  }, [selectedPresetId, presets, activeWorkflowId]);
 
   // Autosave current canvas nodes/edges changes back into the active customized workflow (non-template)
   useEffect(() => {
@@ -1675,23 +1763,54 @@ function Canvas() {
           <div className="flex-1 overflow-auto p-3 space-y-2">
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
-                  initial state (json)
-                </span>
-                {initialStateError ? (
-                  <span className="font-mono text-[9px] text-[hsl(var(--issue))] uppercase tracking-wider font-semibold">
-                    ⚠ invalid json
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-dashed border-[hsl(var(--grid-line))] pb-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                    initial state (json)
                   </span>
-                ) : (
-                  <span className="font-mono text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">
-                    ✓ valid
-                  </span>
-                )}
+                  {initialStateError ? (
+                    <span className="font-mono text-[9px] text-[hsl(var(--issue))] uppercase tracking-wider font-semibold">
+                      ⚠ invalid
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">
+                      ✓ valid
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                  <span className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">preset:</span>
+                  <select
+                    value={selectedPresetId || ""}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedPresetId(id);
+                      const found = presets.find(p => p.id === id);
+                      if (found) {
+                        setInitialStateStr(found.stateJson);
+                      }
+                    }}
+                    disabled={running}
+                    className="bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] outline-none py-0.5 px-1.5 font-mono text-[9px] text-[hsl(var(--ink))] max-w-[150px] truncate"
+                  >
+                    <option value="" disabled>-- select preset --</option>
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} {p.isDefault ? "" : "★"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
               <textarea
                 value={initialStateStr}
-                onChange={(e) => setInitialStateStr(e.target.value)}
+                onChange={(e) => {
+                  setInitialStateStr(e.target.value);
+                  // deselect preset if text is customized manually
+                  setSelectedPresetId("");
+                }}
                 disabled={running}
                 rows={4}
                 className={`w-full font-mono text-[10px] p-2 bg-transparent border border-dashed outline-none resize-y ${
@@ -1706,6 +1825,64 @@ function Canvas() {
                   {initialStateError}
                 </div>
               )}
+
+              {/* Preset manager tools */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                {!showSavePresetForm ? (
+                  <button
+                    type="button"
+                    disabled={running || !!initialStateError}
+                    onClick={() => setShowSavePresetForm(true)}
+                    className="font-mono text-[8px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-40"
+                  >
+                    + Save as Preset
+                  </button>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSavePreset();
+                    }}
+                    className="flex items-center gap-1.5 w-full"
+                  >
+                    <input
+                      type="text"
+                      required
+                      placeholder="Preset Name"
+                      value={newPresetName}
+                      onChange={(e) => setNewPresetName(e.target.value)}
+                      className="flex-1 bg-transparent border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-0.5 px-2 font-mono text-[9px] text-[hsl(var(--ink))]"
+                    />
+                    <button
+                      type="submit"
+                      className="font-mono text-[8px] uppercase px-2 py-1 bg-[hsl(var(--ink))] text-[hsl(var(--paper))]"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSavePresetForm(false);
+                        setNewPresetName("");
+                      }}
+                      className="font-mono text-[8px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink-faint))]"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                )}
+
+                {selectedPresetId && !presets.find(p => p.id === selectedPresetId)?.isDefault && (
+                  <button
+                    type="button"
+                    disabled={running}
+                    onClick={handleDeletePreset}
+                    className="font-mono text-[8px] uppercase tracking-wider px-2 py-1 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                  >
+                    Delete Selected Preset
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Visual Speed Selector */}
