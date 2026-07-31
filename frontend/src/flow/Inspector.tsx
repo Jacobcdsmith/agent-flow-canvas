@@ -2,17 +2,19 @@ import { useState } from "react";
 import { Edge, Node } from "reactflow";
 import { AgentNodeData, NODE_TYPES } from "./types";
 import type { Gateway } from "./gateways";
+import { loadWorkflows, TEMPLATES } from "./workflows";
 
 interface Props {
   node: Node<AgentNodeData> | null;
   edges: Edge[];
   nodes: Node<AgentNodeData>[];
   gateways?: Gateway[];
+  activeWorkflowId?: string | null;
   onChange: (id: string, data: Partial<AgentNodeData>) => void;
   onDelete: (id: string) => void;
 }
 
-export function Inspector({ node, edges, nodes, gateways = [], onChange, onDelete }: Props) {
+export function Inspector({ node, edges, nodes, gateways = [], activeWorkflowId, onChange, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false);
 
   if (!node) {
@@ -45,11 +47,35 @@ export function Inspector({ node, edges, nodes, gateways = [], onChange, onDelet
         />
       </label>
 
-      {meta.configFields.map((f) => (
-        <label key={f.key} className="block">
-          <span className="text-[10px] text-[hsl(var(--ink-faint))]">{f.label}</span>
-          {f.type === "textarea" ? (
-            <textarea
+      {meta.configFields.map((f) => {
+        const isSubagentGraph = node.data.kind === "subagent" && f.key === "graph";
+        const allWorkflows = [...TEMPLATES, ...loadWorkflows()];
+        const subagentWorkflowOptions = allWorkflows.filter((w) => w.id !== activeWorkflowId);
+
+        return (
+          <label key={f.key} className="block">
+            <span className="text-[10px] text-[hsl(var(--ink-faint))]">{f.label}</span>
+            {isSubagentGraph ? (
+              <select
+                value={node.data.config?.[f.key] ?? ""}
+                onChange={(e) =>
+                  onChange(node.id, {
+                    config: { ...node.data.config, [f.key]: e.target.value },
+                  })
+                }
+                className="mt-1 w-full bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1.5 px-2 text-[hsl(var(--ink))]"
+              >
+                <option value="" disabled>
+                  -- select nested workflow --
+                </option>
+                {subagentWorkflowOptions.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} ({w.isTemplate ? "template" : "custom"})
+                  </option>
+                ))}
+              </select>
+            ) : f.type === "textarea" ? (
+              <textarea
               value={node.data.config?.[f.key] ?? ""}
               placeholder={f.placeholder}
               rows={4}
@@ -92,7 +118,8 @@ export function Inspector({ node, edges, nodes, gateways = [], onChange, onDelet
             />
           )}
         </label>
-      ))}
+        );
+      })}
 
       {isLLM && (
         <label className="block">
