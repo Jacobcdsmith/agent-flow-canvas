@@ -3,6 +3,7 @@ import type { AgentNodeData } from "./types";
 import type { Gateway } from "./gateways";
 import { callLLM, ChatMessage } from "./adapters";
 import { loadGlobals, loadSecrets } from "./globals";
+import { loadWorkflows, TEMPLATES } from "./workflows";
 
 export interface RunLog {
   step: number;
@@ -14,6 +15,7 @@ export interface RunLog {
   error?: string;
   ms: number;
   stateSnapshot?: Record<string, unknown>;
+  subLogs?: RunLog[];
 }
 
 export interface RunOptions {
@@ -310,11 +312,58 @@ export async function runNode(
       return { read: key, value: memory[key] ?? null };
     }
     case "subagent": {
+      const allWorkflows = [...TEMPLATES, ...loadWorkflows()];
+      const subWorkflow = allWorkflows.find(w => w.id === cfg.graph || w.name === cfg.graph);
+
+      if (!subWorkflow) {
+        return {
+          simulated: true,
+          subagent: cfg.graph || "unknown",
+          input: interpolate(cfg.input || "", state, globalsList, secretsList),
+          note: "subagent workflow not found, fallback to simulated",
+        };
+      }
+
+      const rawInput = cfg.input || "";
+      const interpolatedInput = interpolate(rawInput, state, globalsList, secretsList);
+
+      let subInitialState: Record<string, unknown> = { query: interpolatedInput };
+      try {
+        const trimmed = interpolatedInput.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          const parsed = JSON.parse(trimmed);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            subInitialState = parsed as Record<string, unknown>;
+          }
+        }
+      } catch {
+        // Fallback to simple query string
+      }
+
+      const subLogs: RunLog[] = [];
+      const subResultLogs = await runFlow({
+        nodes: subWorkflow.nodes,
+        edges: subWorkflow.edges,
+        gateways: opts.gateways,
+        initialState: subInitialState,
+        maxSteps: opts.maxSteps,
+        globals: globalsList,
+        secrets: secretsList,
+        onLog: (subLog) => {
+          subLogs.push(subLog);
+        },
+        onHumanApproval: opts.onHumanApproval,
+      });
+
+      const lastLogWithSnapshot = [...subResultLogs].reverse().find(l => l.stateSnapshot !== undefined);
+      const subFinalOutput = lastLogWithSnapshot?.stateSnapshot?.last_output ?? lastLogWithSnapshot?.output;
+
       return {
-        simulated: true,
-        subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state, globalsList, secretsList),
-        note: "subagent execution is schematic",
+        subagent: subWorkflow.name,
+        subagentId: subWorkflow.id,
+        input: subInitialState,
+        output: subFinalOutput,
+        subLogs,
       };
     }
     case "human": {

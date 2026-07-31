@@ -1,6 +1,7 @@
 import { Edge, Node } from "reactflow";
 import { AgentNodeData, AgentNodeKind } from "./types";
 import { GlobalVar, SecretVar } from "./globals";
+import { loadWorkflows, TEMPLATES } from "./workflows";
 
 // =====================================================================
 // codegen.ts
@@ -357,14 +358,35 @@ export function generatePython(
           `decision = bool(state.last) if state.last is not None else True`,
           `return "true" if decision else "false"`,
         ].join("\n");
-      case "subagent":
+      case "subagent": {
+        let subWfName = "unknown";
+        let nodeCount = 0;
+        let edgeCount = 0;
+        try {
+          const allWfs = [...TEMPLATES, ...loadWorkflows()];
+          const matched = allWfs.find(w => w.id === c.graph || w.name === c.graph);
+          if (matched) {
+            subWfName = matched.name;
+            nodeCount = matched.nodes.length;
+            edgeCount = matched.edges.length;
+          }
+        } catch {
+          // ignore
+        }
+
+        const detailComment = subWfName !== "unknown"
+          ? `# Delegating to workflow "${subWfName}" (${nodeCount} nodes, ${edgeCount} edges)`
+          : `# Delegating to sub-graph: ${c.graph || "unknown"}`;
+
         return [
+          detailComment,
           `input_val = interpolate(${pyStr(c.input || "input")}, state)`,
           `payload = state.get(input_val, state.last) if input_val in state.data else input_val`,
           `result = await run_subgraph(${pyStr(c.graph || "sub")}, payload, state)`,
           `state.last = result`,
           `return "on_success"`,
         ].join("\n");
+      }
       case "memory":
         if ((c.op || "read") === "write") {
           return [
@@ -564,8 +586,28 @@ export function generateJavaScript(
         return `const argsVal = interpolate(${JSON.stringify(c.args || "")}, state);\nstate.last = await callTool(${JSON.stringify(c.tool || "noop")}, { raw: argsVal });\nreturn "tool_result";`;
       case "router":
         return `// predicate: ${(c.predicate || "true").replace(/\n/g, " ")}\nreturn state.last ? "true" : "false";`;
-      case "subagent":
-        return `const inputVal = interpolate(${JSON.stringify(c.input || "input")}, state);\nconst payload = state.get(inputVal) ?? inputVal;\nstate.last = await runSubgraph(${JSON.stringify(c.graph || "sub")}, payload);\nreturn "on_success";`;
+      case "subagent": {
+        let subWfName = "unknown";
+        let nodeCount = 0;
+        let edgeCount = 0;
+        try {
+          const allWfs = [...TEMPLATES, ...loadWorkflows()];
+          const matched = allWfs.find(w => w.id === c.graph || w.name === c.graph);
+          if (matched) {
+            subWfName = matched.name;
+            nodeCount = matched.nodes.length;
+            edgeCount = matched.edges.length;
+          }
+        } catch {
+          // ignore
+        }
+
+        const comment = subWfName !== "unknown"
+          ? `// Delegating to workflow "${subWfName}" (${nodeCount} nodes, ${edgeCount} edges)\n`
+          : `// Delegating to sub-graph: ${c.graph || "unknown"}\n`;
+
+        return `${comment}const inputVal = interpolate(${JSON.stringify(c.input || "input")}, state);\nconst payload = state.get(inputVal) ?? inputVal;\nstate.last = await runSubgraph(${JSON.stringify(c.graph || "sub")}, payload);\nreturn "on_success";`;
+      }
       case "memory":
         return (c.op || "read") === "write"
           ? `await memoryWrite(${JSON.stringify(c.key || "key")}, state.last, state);\nreturn "next";`

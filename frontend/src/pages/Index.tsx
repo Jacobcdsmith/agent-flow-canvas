@@ -1493,6 +1493,7 @@ function Canvas() {
               edges={edges}
               nodes={nodes}
               gateways={gateways}
+              activeWorkflowId={activeWorkflowId}
               onChange={updateNode}
               onDelete={deleteNode}
             />
@@ -1591,7 +1592,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} activeWorkflowId={activeWorkflowId} onChange={updateNode} onDelete={deleteNode} />
           </div>
         </div>
       )}
@@ -1995,6 +1996,78 @@ function Canvas() {
                     <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
   {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
                     </pre>
+                  )}
+                  {/* Collapsible Nested Subagent Logs */}
+                  {l.output && typeof l.output === "object" && "subLogs" in l.output && Array.isArray((l.output as any).subLogs) && (
+                    <div className="mt-2 border-t border-dashed border-[hsl(var(--grid-line))] pt-2 pl-3 bg-[hsl(var(--ink)/0.01)]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedLogSnapshots((prev) => ({
+                            ...prev,
+                            [`sub-${uniqueKey}`]: !prev[`sub-${uniqueKey}`],
+                          }));
+                        }}
+                        className="select-none font-bold text-[hsl(var(--node-subagent))] hover:opacity-80 flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                      >
+                        <span className={`transition-transform duration-100 ${expandedLogSnapshots[`sub-${uniqueKey}`] ? "rotate-90" : ""}`}>▶</span>
+                        <span>View Subagent Execution logs ({((l.output as any).subLogs as any[]).length} steps)</span>
+                      </button>
+                      {expandedLogSnapshots[`sub-${uniqueKey}`] && (
+                        <div className="mt-2 space-y-2 border-l border-dashed border-[hsl(var(--node-subagent))/0.3] pl-2">
+                          {((l.output as any).subLogs as RunLog[]).map((subL) => {
+                            const subUniqueKey = `sub-${uniqueKey}-${subL.step}-${subL.nodeId}`;
+                            const isSubExpanded = !!expandedLogSnapshots[subUniqueKey];
+                            return (
+                              <div
+                                key={subUniqueKey}
+                                className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[9px] bg-[hsl(var(--paper))]"
+                                style={subL.error ? { borderColor: "hsl(var(--issue))" } : undefined}
+                              >
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className="text-[hsl(var(--ink-faint))]">#{subL.step}</span>
+                                  <span className="font-semibold text-[hsl(var(--ink))]">{subL.name}</span>
+                                  <span className="uppercase tracking-[0.15em] text-[8px] text-[hsl(var(--ink-soft))]">{subL.kind}</span>
+                                  <span className="ml-auto text-[hsl(var(--ink-faint))]">{subL.ms}ms</span>
+                                </div>
+                                <div className="text-[hsl(var(--ink-soft))]">
+                                  → <span className="uppercase tracking-wider">{subL.label}</span>
+                                </div>
+                                {subL.error ? (
+                                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{subL.error}</pre>
+                                ) : (
+                                  <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-32 overflow-auto">
+                                    {typeof subL.output === "string" ? subL.output : JSON.stringify(subL.output, null, 2)}
+                                  </pre>
+                                )}
+                                {subL.stateSnapshot && (
+                                  <div className="mt-1 border-t border-dashed border-[hsl(var(--grid-line))] pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setExpandedLogSnapshots((prev) => ({
+                                          ...prev,
+                                          [subUniqueKey]: !prev[subUniqueKey],
+                                        }));
+                                      }}
+                                      className="select-none font-semibold text-[hsl(var(--ink-faint))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[8px] uppercase tracking-[0.1em]"
+                                    >
+                                      <span className={`transition-transform duration-100 ${isSubExpanded ? "rotate-90" : ""}`}>▶</span>
+                                      <span>state snapshot</span>
+                                    </button>
+                                    {isSubExpanded && (
+                                      <pre className="mt-1 p-1 bg-[hsl(var(--ink)/0.01)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-36 text-[8px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+                                        {JSON.stringify(subL.stateSnapshot, null, 2)}
+                                      </pre>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   )}
                   {l.stateSnapshot && (
                     <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
