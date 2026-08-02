@@ -3,6 +3,7 @@ import type { AgentNodeData } from "./types";
 import type { Gateway } from "./gateways";
 import { callLLM, ChatMessage } from "./adapters";
 import { loadGlobals, loadSecrets } from "./globals";
+import { TEMPLATES, loadWorkflows } from "./workflows";
 
 export interface RunLog {
   step: number;
@@ -14,6 +15,12 @@ export interface RunLog {
   error?: string;
   ms: number;
   stateSnapshot?: Record<string, unknown>;
+  subLogs?: RunLog[];
+}
+
+function findWorkflowById(id: string) {
+  const all = [...TEMPLATES, ...loadWorkflows()];
+  return all.find((w) => w.id === id);
 }
 
 export interface RunOptions {
@@ -173,11 +180,19 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
     const t0 = performance.now();
     let output: unknown;
     let error: string | undefined;
+    let subLogs: RunLog[] | undefined;
     state.__last_kind = current.data.kind;
     delete state.__router_branch;
 
     try {
-      output = await runNode(current, state, gateways, opts, globalsList, secretsList);
+      const nodeResult = await runNode(current, state, gateways, opts, globalsList, secretsList);
+      if (nodeResult && typeof nodeResult === "object" && "__isSubagentResult" in nodeResult) {
+        const subResult = nodeResult as { output: unknown; subLogs: RunLog[] };
+        output = subResult.output;
+        subLogs = subResult.subLogs;
+      } else {
+        output = nodeResult;
+      }
       if (output !== undefined) state.last_output = output;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -201,6 +216,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
       error,
       ms,
       stateSnapshot,
+      subLogs,
     };
     logs.push(log);
     onLog?.(log);
@@ -310,11 +326,62 @@ export async function runNode(
       return { read: key, value: memory[key] ?? null };
     }
     case "subagent": {
+      const graphId = cfg.graph || "";
+      const targetWf = findWorkflowById(graphId);
+      if (!targetWf) {
+        throw new Error(`Subagent workflow with ID "${graphId}" not found in library.`);
+      }
+
+      // Prepare sub-workflow initial state
+      let subInitialState: Record<string, unknown> = {};
+      const rawInput = cfg.input || "";
+      if (rawInput.trim()) {
+        const inputValStr = interpolate(rawInput, state, globalsList, secretsList);
+        try {
+          const parsed = JSON.parse(inputValStr);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            subInitialState = parsed as Record<string, unknown>;
+          } else {
+            subInitialState = { query: inputValStr };
+          }
+        } catch {
+          // Check if input references a key directly in parent state
+          const valueInParentState = state[inputValStr];
+          if (valueInParentState && typeof valueInParentState === "object" && !Array.isArray(valueInParentState)) {
+            subInitialState = valueInParentState as Record<string, unknown>;
+          } else {
+            subInitialState = { query: inputValStr };
+          }
+        }
+      } else {
+        // Deep copy parent state to child if no custom input expression is provided
+        try {
+          subInitialState = JSON.parse(JSON.stringify(state));
+        } catch {
+          subInitialState = { ...state };
+        }
+      }
+
+      // Execute recursively using runFlow
+      const subLogs = await runFlow({
+        nodes: targetWf.nodes,
+        edges: targetWf.edges,
+        gateways,
+        initialState: subInitialState,
+        stepDelay: opts.stepDelay,
+        onHumanApproval: opts.onHumanApproval,
+        globals: globalsList,
+        secrets: secretsList,
+      });
+
+      // The final state of the sub-workflow is the stateSnapshot of the last log entry
+      const lastLog = subLogs[subLogs.length - 1];
+      const finalState = lastLog?.stateSnapshot ?? subInitialState;
+
       return {
-        simulated: true,
-        subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state, globalsList, secretsList),
-        note: "subagent execution is schematic",
+        __isSubagentResult: true,
+        output: finalState,
+        subLogs,
       };
     }
     case "human": {

@@ -741,6 +741,7 @@ function Canvas() {
     state.__last_kind = node.data.kind;
     delete state.__router_branch;
 
+    let subLogs: RunLog[] | undefined;
     try {
       const approvalPromise = ({ nodeId, name, prompt, channel }: { nodeId: string; name: string; prompt: string; channel: string }) => {
         return new Promise<string>((resolve) => {
@@ -753,7 +754,7 @@ function Canvas() {
           });
         });
       };
-      output = await runNode(
+      const nodeResult = await runNode(
         node,
         state,
         gateways,
@@ -766,6 +767,13 @@ function Canvas() {
         globals,
         secrets
       );
+      if (nodeResult && typeof nodeResult === "object" && "__isSubagentResult" in nodeResult) {
+        const subResult = nodeResult as { output: unknown; subLogs: RunLog[] };
+        output = subResult.output;
+        subLogs = subResult.subLogs;
+      } else {
+        output = nodeResult;
+      }
       if (output !== undefined) state.last_output = output;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -789,6 +797,7 @@ function Canvas() {
       error,
       ms,
       stateSnapshot,
+      subLogs,
     };
 
     const nextHistory = [...history, log];
@@ -940,6 +949,7 @@ function Canvas() {
       curState.__last_kind = node.data.kind;
       delete curState.__router_branch;
 
+      let subLogs: RunLog[] | undefined;
       try {
         const approvalPromise = ({ nodeId, name, prompt, channel }: { nodeId: string; name: string; prompt: string; channel: string }) => {
           return new Promise<string>((resolve) => {
@@ -952,7 +962,7 @@ function Canvas() {
             });
           });
         };
-        output = await runNode(
+        const nodeResult = await runNode(
           node,
           curState,
           gateways,
@@ -965,6 +975,13 @@ function Canvas() {
           globals,
           secrets
         );
+        if (nodeResult && typeof nodeResult === "object" && "__isSubagentResult" in nodeResult) {
+          const subResult = nodeResult as { output: unknown; subLogs: RunLog[] };
+          output = subResult.output;
+          subLogs = subResult.subLogs;
+        } else {
+          output = nodeResult;
+        }
         if (output !== undefined) curState.last_output = output;
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
@@ -988,6 +1005,7 @@ function Canvas() {
         error,
         ms,
         stateSnapshot,
+        subLogs,
       };
 
       curHistory = [...curHistory, log];
@@ -1971,56 +1989,91 @@ function Canvas() {
                 no logs — see toast for error
               </div>
             )}
-            {filteredLogs.map((l) => {
-              const uniqueKey = `${l.step}-${l.nodeId}`;
-              const isExpanded = !!expandedLogSnapshots[uniqueKey];
-              return (
-                <div
-                  key={uniqueKey}
-                  className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
-                  style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
-                    <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
-                    <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
-                    <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
-                  </div>
-                  <div className="text-[hsl(var(--ink-soft))]">
-                    → <span className="uppercase tracking-wider">{l.label}</span>
-                  </div>
-                  {l.error ? (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
-                  ) : (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
-  {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
-                    </pre>
-                  )}
-                  {l.stateSnapshot && (
-                    <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedLogSnapshots((prev) => ({
-                            ...prev,
-                            [uniqueKey]: !prev[uniqueKey],
-                          }));
-                        }}
-                        className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
-                      >
-                        <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
-                        <span>state snapshot</span>
-                      </button>
-                      {isExpanded && (
-                        <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
-  {JSON.stringify(l.stateSnapshot, null, 2)}
-                        </pre>
-                      )}
+            {(() => {
+              const renderLogItem = (l: RunLog, depth: number = 0): React.ReactNode => {
+                const uniqueKey = `${l.step}-${l.nodeId}-${depth}`;
+                const isExpanded = !!expandedLogSnapshots[uniqueKey];
+                const isSubLogsExpanded = !!expandedLogSnapshots[`sublogs-${uniqueKey}`];
+                const hasSubLogs = l.subLogs && l.subLogs.length > 0;
+
+                return (
+                  <div
+                    key={uniqueKey}
+                    className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
+                    style={{
+                      borderColor: l.error ? "hsl(var(--issue))" : undefined,
+                      marginLeft: `${depth * 12}px`,
+                      background: depth > 0 ? "hsl(var(--ink)/0.01)" : undefined,
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
+                      <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
+                      <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
+                      <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                    <div className="text-[hsl(var(--ink-soft))]">
+                      → <span className="uppercase tracking-wider">{l.label}</span>
+                    </div>
+                    {l.error ? (
+                      <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
+                    ) : (
+                      <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+                        {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
+                      </pre>
+                    )}
+
+                    {hasSubLogs && (
+                      <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedLogSnapshots((prev) => ({
+                              ...prev,
+                              [`sublogs-${uniqueKey}`]: !prev[`sublogs-${uniqueKey}`],
+                            }));
+                          }}
+                          className="select-none font-semibold text-[hsl(var(--edge-selected))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                        >
+                          <span className={`transition-transform duration-100 ${isSubLogsExpanded ? "rotate-90" : ""}`}>▶</span>
+                          <span>{isSubLogsExpanded ? "hide" : "show"} nested workflow logs ({l.subLogs!.length} steps)</span>
+                        </button>
+                        {isSubLogsExpanded && (
+                          <div className="mt-1.5 space-y-1.5 border-l border-dashed border-[hsl(var(--edge-selected)/0.3)] pl-1.5">
+                            {l.subLogs!.map((subL) => renderLogItem(subL, depth + 1))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {l.stateSnapshot && (
+                      <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedLogSnapshots((prev) => ({
+                              ...prev,
+                              [uniqueKey]: !prev[uniqueKey],
+                            }));
+                          }}
+                          className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                        >
+                          <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                          <span>state snapshot</span>
+                        </button>
+                        {isExpanded && (
+                          <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+                            {JSON.stringify(l.stateSnapshot, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              return filteredLogs.map((l) => renderLogItem(l, 0));
+            })()}
           </div>
         </div>
       )}
