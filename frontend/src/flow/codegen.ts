@@ -1,6 +1,12 @@
 import { Edge, Node } from "reactflow";
 import { AgentNodeData, AgentNodeKind } from "./types";
 import { GlobalVar, SecretVar } from "./globals";
+import { TEMPLATES, loadWorkflows } from "./workflows";
+
+function findWorkflowById(id: string) {
+  const all = [...TEMPLATES, ...loadWorkflows()];
+  return all.find((w) => w.id === id);
+}
 
 // =====================================================================
 // codegen.ts
@@ -292,6 +298,16 @@ export function generatePython(
   lines.push(``);
 
   for (const b of bindings) {
+    if (b.data.kind === "subagent") {
+      const graphId = b.data.config?.graph || "";
+      const targetWf = findWorkflowById(graphId);
+      if (targetWf) {
+        lines.push(`# Nested Subagent Workflow: ${targetWf.name}`);
+        lines.push(`# Nodes: ${targetWf.nodes.length} | Edges: ${targetWf.edges.length}`);
+      } else {
+        lines.push(`# Nested Subagent Workflow: ID "${graphId}" (not found in library)`);
+      }
+    }
     const body = pyBody(b.data);
     lines.push(`@graph.node(${pyStr(b.funcName)})`);
     lines.push(`async def ${b.funcName}(state: State) -> str:`);
@@ -534,6 +550,16 @@ export function generateJavaScript(
   lines.push(``);
 
   for (const b of bindings) {
+    if (b.data.kind === "subagent") {
+      const graphId = b.data.config?.graph || "";
+      const targetWf = findWorkflowById(graphId);
+      if (targetWf) {
+        lines.push(`// Nested Subagent Workflow: ${targetWf.name}`);
+        lines.push(`// Nodes: ${targetWf.nodes.length} | Edges: ${targetWf.edges.length}`);
+      } else {
+        lines.push(`// Nested Subagent Workflow: ID "${graphId}" (not found in library)`);
+      }
+    }
     lines.push(`graph.node(${JSON.stringify(b.funcName)}, async (state) => {`);
     lines.push(indent(jsBody(b.data)));
     lines.push(`});`);
