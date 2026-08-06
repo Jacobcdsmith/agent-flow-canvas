@@ -63,6 +63,108 @@ const nodeTypes = { agent: AgentNode };
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
 
+interface LogItemRowProps {
+  log: RunLog;
+  depth?: number;
+  expandedSnapshots: Record<string, boolean>;
+  toggleSnapshot: (key: string) => void;
+}
+
+function LogItemRow({
+  log,
+  depth = 0,
+  expandedSnapshots,
+  toggleSnapshot,
+}: LogItemRowProps) {
+  const uniqueKey = `${log.step}-${log.nodeId}-${depth}`;
+  const isExpanded = !!expandedSnapshots[uniqueKey];
+
+  // Detect nested subLogs array in subagent nodes
+  const outputObj = log.output as any;
+  const hasSubLogs = outputObj && Array.isArray(outputObj.subLogs);
+  const subLogs = hasSubLogs ? (outputObj.subLogs as RunLog[]) : [];
+
+  const [subLogsExpanded, setSubLogsExpanded] = useState(true);
+
+  return (
+    <div
+      className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px] space-y-1 transition-all"
+      style={{
+        marginLeft: `${depth * 10}px`,
+        borderColor: log.error ? "hsl(var(--issue))" : undefined,
+        background: depth > 0 ? "hsl(var(--ink)/0.015)" : undefined,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <span className="text-[hsl(var(--ink-faint))]">#{log.step}</span>
+        <span className="font-semibold text-[hsl(var(--ink))]">{log.name}</span>
+        <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{log.kind}</span>
+        {depth > 0 && (
+          <span className="text-[8px] px-1 py-0.2 border border-[hsl(var(--ink-faint))] text-[hsl(var(--ink-soft))] uppercase tracking-wider font-semibold scale-90">
+            nested
+          </span>
+        )}
+        <span className="ml-auto text-[hsl(var(--ink-faint))]">{log.ms}ms</span>
+      </div>
+      <div className="text-[hsl(var(--ink-soft))]">
+        → <span className="uppercase tracking-wider">{log.label}</span>
+      </div>
+      {log.error ? (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{log.error}</pre>
+      ) : (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+          {typeof log.output === "string" ? log.output : JSON.stringify(log.output, null, 2)}
+        </pre>
+      )}
+
+      {/* State Snapshot panel */}
+      {log.stateSnapshot && (
+        <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+          <button
+            type="button"
+            onClick={() => toggleSnapshot(uniqueKey)}
+            className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+          >
+            <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+            <span>state snapshot</span>
+          </button>
+          {isExpanded && (
+            <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+              {JSON.stringify(log.stateSnapshot, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Collapsible Sub Logs list */}
+      {hasSubLogs && (
+        <div className="mt-2 border-t border-[hsl(var(--grid-line))] pt-2 pl-2">
+          <button
+            type="button"
+            onClick={() => setSubLogsExpanded(!subLogsExpanded)}
+            className="select-none font-bold text-[hsl(var(--edge-selected))] hover:underline flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em] mb-1.5"
+          >
+            <span>{subLogsExpanded ? "▼ Hide" : "▶ Show"} Nested Sub-Workflow ({subLogs.length} steps)</span>
+          </button>
+          {subLogsExpanded && (
+            <div className="space-y-2 border-l border-dotted border-[hsl(var(--grid-line))] pl-2">
+              {subLogs.map((subLog) => (
+                <LogItemRow
+                  key={`${subLog.step}-${subLog.nodeId}-${depth + 1}`}
+                  log={subLog}
+                  depth={depth + 1}
+                  expandedSnapshots={expandedSnapshots}
+                  toggleSnapshot={toggleSnapshot}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
@@ -1495,6 +1597,8 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              workflows={workflows}
+              activeWorkflowId={activeWorkflowId}
             />
           </div>
 
@@ -1591,7 +1695,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
@@ -1971,56 +2075,20 @@ function Canvas() {
                 no logs — see toast for error
               </div>
             )}
-            {filteredLogs.map((l) => {
-              const uniqueKey = `${l.step}-${l.nodeId}`;
-              const isExpanded = !!expandedLogSnapshots[uniqueKey];
-              return (
-                <div
-                  key={uniqueKey}
-                  className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
-                  style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
-                    <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
-                    <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
-                    <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
-                  </div>
-                  <div className="text-[hsl(var(--ink-soft))]">
-                    → <span className="uppercase tracking-wider">{l.label}</span>
-                  </div>
-                  {l.error ? (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
-                  ) : (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
-  {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
-                    </pre>
-                  )}
-                  {l.stateSnapshot && (
-                    <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedLogSnapshots((prev) => ({
-                            ...prev,
-                            [uniqueKey]: !prev[uniqueKey],
-                          }));
-                        }}
-                        className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
-                      >
-                        <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
-                        <span>state snapshot</span>
-                      </button>
-                      {isExpanded && (
-                        <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
-  {JSON.stringify(l.stateSnapshot, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {filteredLogs.map((l) => (
+              <LogItemRow
+                key={`${l.step}-${l.nodeId}-0`}
+                log={l}
+                depth={0}
+                expandedSnapshots={expandedLogSnapshots}
+                toggleSnapshot={(key) => {
+                  setExpandedLogSnapshots((prev) => ({
+                    ...prev,
+                    [key]: !prev[key],
+                  }));
+                }}
+              />
+            ))}
           </div>
         </div>
       )}
