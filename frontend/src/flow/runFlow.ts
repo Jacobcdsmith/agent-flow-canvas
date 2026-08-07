@@ -3,6 +3,7 @@ import type { AgentNodeData } from "./types";
 import type { Gateway } from "./gateways";
 import { callLLM, ChatMessage } from "./adapters";
 import { loadGlobals, loadSecrets } from "./globals";
+import { TEMPLATES, loadWorkflows } from "./workflows";
 
 export interface RunLog {
   step: number;
@@ -310,11 +311,70 @@ export async function runNode(
       return { read: key, value: memory[key] ?? null };
     }
     case "subagent": {
+      const rawInput = cfg.input || "";
+      const interpolatedInput = interpolate(rawInput, state, globalsList, secretsList);
+      let subInitialState: Record<string, unknown> = { query: "subtask" };
+
+      if (interpolatedInput.trim()) {
+        try {
+          const parsed = JSON.parse(interpolatedInput);
+          if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            subInitialState = parsed;
+          } else {
+            subInitialState = { query: interpolatedInput };
+          }
+        } catch {
+          if (rawInput.startsWith("state.")) {
+            const pathVal = getPath(state, rawInput.slice(6));
+            if (pathVal !== undefined) {
+              if (typeof pathVal === "object" && pathVal !== null && !Array.isArray(pathVal)) {
+                subInitialState = pathVal as Record<string, unknown>;
+              } else {
+                subInitialState = { query: String(pathVal) };
+              }
+            } else {
+              subInitialState = { query: interpolatedInput };
+            }
+          } else {
+            subInitialState = { query: interpolatedInput };
+          }
+        }
+      }
+
+      // Lookup target nested workflow from Workflows Library (Templates + Custom Workflows)
+      const allWfs = [...TEMPLATES, ...loadWorkflows()];
+      const subWf = allWfs.find((w) => w.id === cfg.graph);
+
+      if (!subWf) {
+        return {
+          simulated: true,
+          subagent: cfg.graph || "unknown",
+          input: interpolatedInput,
+          note: `Sub-workflow ${cfg.graph} not found — simulated fallback`,
+        };
+      }
+
+      // Execute sub-workflow recursively in-browser
+      const subLogs = await runFlow({
+        nodes: subWf.nodes,
+        edges: subWf.edges,
+        gateways,
+        initialState: subInitialState,
+        maxSteps: opts.maxSteps,
+        stepDelay: opts.stepDelay,
+        onHumanApproval: opts.onHumanApproval,
+        globals: globalsList,
+        secrets: secretsList,
+      });
+
+      const finalLog = subLogs[subLogs.length - 1];
+      const finalOutput = finalLog ? (finalLog.output ?? finalLog.stateSnapshot?.last_output ?? null) : null;
+
       return {
-        simulated: true,
-        subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state, globalsList, secretsList),
-        note: "subagent execution is schematic",
+        subagent: subWf.name,
+        input: subInitialState,
+        output: finalOutput,
+        subLogs,
       };
     }
     case "human": {
