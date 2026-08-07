@@ -11,7 +11,7 @@ export function classifySource(referrer: string): string {
     if (host.includes("google")) return "google";
     if (host.includes("bing") || host.includes("duckduckgo") || host.includes("yahoo")) return "search";
     if (host.includes("github")) return "github";
-    if (host.includes("twitter") || host.includes("x.com")) return "twitter";
+    if (host.includes("twitter") || host === "x.com" || host.endsWith(".x.com")) return "twitter";
     if (host.includes("reddit")) return "reddit";
     if (host.includes("linkedin")) return "linkedin";
     if (host.includes("producthunt")) return "product_hunt";
