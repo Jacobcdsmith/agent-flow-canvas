@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { trackEvent } from "@/lib/analytics";
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -133,6 +134,10 @@ function Canvas() {
   // Run logs filtering and detail toggles state
   const [logsSearchQuery, setLogsSearchQuery] = useState("");
   const [expandedLogSnapshots, setExpandedLogSnapshots] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    trackEvent("open_canvas");
+  }, []);
 
   useEffect(() => {
     try {

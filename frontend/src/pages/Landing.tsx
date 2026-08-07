@@ -1,6 +1,9 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { OpeningAnimation } from "@/components/landing/OpeningAnimation";
 import { Faq } from "@/components/landing/Faq";
+import { AnalyticsWidget } from "@/components/landing/AnalyticsWidget";
+import { trackEvent } from "@/lib/analytics";
 
 const GITHUB_URL = "https://github.com/Jacobcdsmith/agent-flow-canvas";
 
@@ -38,6 +41,10 @@ const FEATURES = [
 ];
 
 export default function Landing() {
+  useEffect(() => {
+    trackEvent("view");
+  }, []);
+
   return (
     <div className="min-h-screen bg-[hsl(var(--paper))] font-mono text-[hsl(var(--ink))]">
       <header className="flex items-center justify-between gap-4 border-b border-dashed border-[hsl(var(--grid-line))] px-6 py-[22px] sm:px-10">
@@ -122,6 +129,8 @@ export default function Landing() {
           ))}
         </div>
       </section>
+
+      <AnalyticsWidget />
 
       <section id="faq" className="mx-auto max-w-[760px] px-6 pb-[120px] pt-5 sm:px-10">
         <div className="mb-2.5 text-[11px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">// faq</div>
