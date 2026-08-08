@@ -3,6 +3,8 @@ import type { AgentNodeData } from "./types";
 import type { Gateway } from "./gateways";
 import { callLLM, ChatMessage } from "./adapters";
 import { loadGlobals, loadSecrets } from "./globals";
+import type { Workflow } from "./workflows";
+import { loadWorkflows, TEMPLATES } from "./workflows";
 
 export interface RunLog {
   step: number;
@@ -32,6 +34,7 @@ export interface RunOptions {
   }) => Promise<string>;
   globals?: { key: string; value: string }[];
   secrets?: { key: string; value: string }[];
+  workflows?: Workflow[];
 }
 
 /**
@@ -310,11 +313,70 @@ export async function runNode(
       return { read: key, value: memory[key] ?? null };
     }
     case "subagent": {
+      const subWfId = cfg.graph || "";
+      const allWfs = opts.workflows ?? [...TEMPLATES, ...loadWorkflows()];
+      const subWf = allWfs.find((w) => w.id === subWfId || w.name === subWfId);
+      if (!subWf) {
+        throw new Error(`Subagent workflow with ID or Name "${subWfId}" not found`);
+      }
+
+      let subState: Record<string, unknown> = { query: "" };
+      const inputVal = cfg.input || "";
+      if (inputVal.trim()) {
+        try {
+          // Evaluate as JS expression against current parent state
+          const fn = new Function("state", `return ${inputVal};`);
+          const evaluated = fn(state);
+          if (evaluated && typeof evaluated === "object" && !Array.isArray(evaluated)) {
+            subState = { ...evaluated };
+          } else {
+            subState = { query: String(evaluated) };
+          }
+        } catch {
+          // Fallback to interpolation
+          const interpolated = interpolate(inputVal, state, globalsList, secretsList);
+          try {
+            const parsed = JSON.parse(interpolated);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              subState = parsed;
+            } else {
+              subState = { query: interpolated };
+            }
+          } catch {
+            subState = { query: interpolated };
+          }
+        }
+      } else {
+        subState = { query: String(state.query ?? "") };
+      }
+
+      const subLogs = await runFlow({
+        nodes: subWf.nodes,
+        edges: subWf.edges,
+        gateways,
+        initialState: subState,
+        stepDelay: opts.stepDelay,
+        onHumanApproval: opts.onHumanApproval,
+        globals: globalsList,
+        secrets: secretsList,
+        workflows: allWfs,
+      });
+
+      const lastLog = subLogs[subLogs.length - 1];
+      let finalResult: unknown = undefined;
+      if (lastLog) {
+        if (lastLog.stateSnapshot && "last_output" in lastLog.stateSnapshot) {
+          finalResult = lastLog.stateSnapshot.last_output;
+        } else {
+          finalResult = lastLog.output;
+        }
+      }
+
       return {
-        simulated: true,
-        subagent: cfg.graph || "unknown",
-        input: interpolate(cfg.input || "", state, globalsList, secretsList),
-        note: "subagent execution is schematic",
+        workflowId: subWf.id,
+        workflowName: subWf.name,
+        subLogs,
+        result: finalResult,
       };
     }
     case "human": {
