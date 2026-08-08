@@ -63,6 +63,109 @@ const nodeTypes = { agent: AgentNode };
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
 
+interface RunLogItemProps {
+  log: RunLog;
+  expandedLogSnapshots: Record<string, boolean>;
+  setExpandedLogSnapshots: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  depth?: number;
+}
+
+function RunLogItem({ log, expandedLogSnapshots, setExpandedLogSnapshots, depth = 0 }: RunLogItemProps) {
+  const uniqueKey = `${log.step}-${log.nodeId}-${depth}`;
+  const isExpanded = !!expandedLogSnapshots[uniqueKey];
+
+  const hasSubLogs = log.kind === "subagent" &&
+    log.output &&
+    typeof log.output === "object" &&
+    "subLogs" in (log.output as any) &&
+    Array.isArray((log.output as any).subLogs);
+
+  const subLogs: RunLog[] = hasSubLogs ? (log.output as any).subLogs : [];
+  const subLogsKey = `${uniqueKey}-sublogs`;
+  const isSubLogsExpanded = expandedLogSnapshots[subLogsKey] !== false;
+
+  return (
+    <div
+      className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
+      style={{
+        borderColor: log.error ? "hsl(var(--issue))" : undefined,
+        marginLeft: depth > 0 ? `${depth * 12}px` : undefined,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[hsl(var(--ink-faint))]">#{log.step}</span>
+        <span className="font-semibold text-[hsl(var(--ink))]">{log.name}</span>
+        <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{log.kind}</span>
+        <span className="ml-auto text-[hsl(var(--ink-faint))]">{log.ms}ms</span>
+      </div>
+      <div className="text-[hsl(var(--ink-soft))]">
+        → <span className="uppercase tracking-wider">{log.label}</span>
+      </div>
+      {log.error ? (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{log.error}</pre>
+      ) : (
+        <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
+          {typeof log.output === "string" ? log.output : JSON.stringify(log.output, null, 2)}
+        </pre>
+      )}
+
+      {log.stateSnapshot && (
+        <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setExpandedLogSnapshots((prev) => ({
+                ...prev,
+                [uniqueKey]: !prev[uniqueKey],
+              }));
+            }}
+            className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+          >
+            <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+            <span>state snapshot</span>
+          </button>
+          {isExpanded && (
+            <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
+              {JSON.stringify(log.stateSnapshot, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {hasSubLogs && (
+        <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setExpandedLogSnapshots((prev) => ({
+                ...prev,
+                [subLogsKey]: !prev[subLogsKey],
+              }));
+            }}
+            className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em] text-[hsl(var(--edge-selected))]"
+          >
+            <span className={`transition-transform duration-100 ${isSubLogsExpanded ? "rotate-90" : ""}`}>▶</span>
+            <span>nested execution ({subLogs.length} steps)</span>
+          </button>
+          {isSubLogsExpanded && (
+            <div className="mt-1.5 space-y-2 border-l-2 border-dotted border-[hsl(var(--edge-selected))/0.4] pl-2">
+              {subLogs.map((sl) => (
+                <RunLogItem
+                  key={`${sl.step}-${sl.nodeId}`}
+                  log={sl}
+                  expandedLogSnapshots={expandedLogSnapshots}
+                  setExpandedLogSnapshots={setExpandedLogSnapshots}
+                  depth={depth + 1}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
@@ -497,8 +600,8 @@ function Canvas() {
   );
 
   const generated = useMemo(
-    () => generateCode(codeLang, nodes, edges, globals, secrets),
-    [nodes, edges, codeLang, globals, secrets],
+    () => generateCode(codeLang, nodes, edges, globals, secrets, [...TEMPLATES, ...workflows]),
+    [nodes, edges, codeLang, globals, secrets, workflows],
   );
   const pseudocode = generated.code;
   const codeLintIssues = useMemo(
@@ -762,6 +865,7 @@ function Canvas() {
           edges,
           gateways,
           onHumanApproval: approvalPromise,
+          workflows: [...TEMPLATES, ...workflows],
         },
         globals,
         secrets
@@ -961,6 +1065,7 @@ function Canvas() {
             edges,
             gateways,
             onHumanApproval: approvalPromise,
+            workflows: [...TEMPLATES, ...workflows],
           },
           globals,
           secrets
@@ -1117,6 +1222,7 @@ function Canvas() {
         stepDelay,
         globals,
         secrets,
+        workflows: [...TEMPLATES, ...workflows],
         onLog: (log) => {
           setRunLogs((prev) => [...(prev ?? []), log]);
           if (log.nodeId && log.nodeId !== "_error" && log.nodeId !== "_runtime") {
@@ -1180,11 +1286,25 @@ function Canvas() {
   const handleLogsExpandAll = () => {
     if (!runLogs) return;
     const patch: Record<string, boolean> = {};
-    runLogs.forEach((l) => {
-      if (l.stateSnapshot) {
-        patch[`${l.step}-${l.nodeId}`] = true;
-      }
-    });
+    const recurseExpand = (logsList: RunLog[], d = 0) => {
+      logsList.forEach((l) => {
+        const uniqueKey = `${l.step}-${l.nodeId}-${d}`;
+        if (l.stateSnapshot) {
+          patch[uniqueKey] = true;
+        }
+        const hasSubLogs = l.kind === "subagent" &&
+          l.output &&
+          typeof l.output === "object" &&
+          "subLogs" in (l.output as any) &&
+          Array.isArray((l.output as any).subLogs);
+        if (hasSubLogs) {
+          const subLogsKey = `${uniqueKey}-sublogs`;
+          patch[subLogsKey] = true;
+          recurseExpand((l.output as any).subLogs, d + 1);
+        }
+      });
+    };
+    recurseExpand(runLogs, 0);
     setExpandedLogSnapshots(patch);
   };
 
@@ -1495,6 +1615,8 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              activeWorkflowId={activeWorkflowId}
+              workflows={workflows}
             />
           </div>
 
@@ -1591,7 +1713,16 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} />
+            <Inspector
+              node={selected}
+              edges={edges}
+              nodes={nodes}
+              gateways={gateways}
+              onChange={updateNode}
+              onDelete={deleteNode}
+              activeWorkflowId={activeWorkflowId}
+              workflows={workflows}
+            />
           </div>
         </div>
       )}
@@ -1971,56 +2102,14 @@ function Canvas() {
                 no logs — see toast for error
               </div>
             )}
-            {filteredLogs.map((l) => {
-              const uniqueKey = `${l.step}-${l.nodeId}`;
-              const isExpanded = !!expandedLogSnapshots[uniqueKey];
-              return (
-                <div
-                  key={uniqueKey}
-                  className="border border-dashed border-[hsl(var(--grid-line))] p-2 font-mono text-[10px]"
-                  style={l.error ? { borderColor: "hsl(var(--issue))" } : undefined}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[hsl(var(--ink-faint))]">#{l.step}</span>
-                    <span className="font-semibold text-[hsl(var(--ink))]">{l.name}</span>
-                    <span className="uppercase tracking-[0.15em] text-[9px] text-[hsl(var(--ink-soft))]">{l.kind}</span>
-                    <span className="ml-auto text-[hsl(var(--ink-faint))]">{l.ms}ms</span>
-                  </div>
-                  <div className="text-[hsl(var(--ink-soft))]">
-                    → <span className="uppercase tracking-wider">{l.label}</span>
-                  </div>
-                  {l.error ? (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--issue))]">{l.error}</pre>
-                  ) : (
-                    <pre className="mt-1 whitespace-pre-wrap text-[hsl(var(--ink))] max-h-40 overflow-auto">
-  {typeof l.output === "string" ? l.output : JSON.stringify(l.output, null, 2)}
-                    </pre>
-                  )}
-                  {l.stateSnapshot && (
-                    <div className="mt-1.5 border-t border-dashed border-[hsl(var(--grid-line))] pt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedLogSnapshots((prev) => ({
-                            ...prev,
-                            [uniqueKey]: !prev[uniqueKey],
-                          }));
-                        }}
-                        className="select-none font-semibold text-[hsl(var(--ink-soft))] hover:text-[hsl(var(--ink))] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
-                      >
-                        <span className={`transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
-                        <span>state snapshot</span>
-                      </button>
-                      {isExpanded && (
-                        <pre className="mt-1.5 p-2 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))] overflow-auto max-h-48 text-[9px] leading-relaxed text-[hsl(var(--ink))] whitespace-pre">
-  {JSON.stringify(l.stateSnapshot, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {filteredLogs.map((l) => (
+              <RunLogItem
+                key={`${l.step}-${l.nodeId}`}
+                log={l}
+                expandedLogSnapshots={expandedLogSnapshots}
+                setExpandedLogSnapshots={setExpandedLogSnapshots}
+              />
+            ))}
           </div>
         </div>
       )}
