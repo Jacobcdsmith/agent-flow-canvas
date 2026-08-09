@@ -1,6 +1,6 @@
-$ vite --port "8080"
+$ vite --host 0.0.0.0 --port 3000
 
-  VITE v5.4.21  ready in 310 ms
+  VITE v5.4.21  ready in 312 ms
 
-  ➜  Local:   http://localhost:8080/
-  ➜  Network: http://192.168.0.2:8080/
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: http://192.168.0.2:3000/

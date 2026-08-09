@@ -57,6 +57,12 @@ import {
   TEMPLATES,
 } from "@/flow/workflows";
 import { WorkflowsManager } from "@/flow/WorkflowsManager";
+import {
+  loadPresets,
+  savePresets,
+  StatePreset,
+  cryptoId as presetCryptoId,
+} from "@/flow/statePresets";
 
 const nodeTypes = { agent: AgentNode };
 
@@ -210,6 +216,60 @@ function Canvas() {
     return JSON.stringify({ query: "hello world" }, null, 2);
   });
   const [initialStateError, setInitialStateError] = useState<string | null>(null);
+
+  // ---- State Presets ----
+  const [presets, setPresets] = useState<StatePreset[]>(() => loadPresets(loadActiveWorkflowId()));
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
+  const [newPresetName, setNewPresetName] = useState<string>("");
+
+  useEffect(() => {
+    let loaded = loadPresets(activeWorkflowId);
+    if (loaded.length === 0) {
+      let defaultPreset: StatePreset | null = null;
+      if (activeWorkflowId === "template-react") {
+        defaultPreset = {
+          id: "seed-react",
+          name: "OpenAI Search Query",
+          stateStr: JSON.stringify({ query: "Should we search the web for OpenAI?" }, null, 2),
+          createdAt: Date.now(),
+        };
+      } else if (activeWorkflowId === "template-http-router") {
+        defaultPreset = {
+          id: "seed-http",
+          name: "GitHub Octocat User",
+          stateStr: JSON.stringify({ username: "octocat" }, null, 2),
+          createdAt: Date.now(),
+        };
+      } else if (activeWorkflowId === "template-translation-hitl") {
+        defaultPreset = {
+          id: "seed-translation",
+          name: "Lennon Quote Translation",
+          stateStr: JSON.stringify({ query: "Life is what happens when you're busy making other plans." }, null, 2),
+          createdAt: Date.now(),
+        };
+      } else if (!activeWorkflowId) {
+        defaultPreset = {
+          id: "seed-default",
+          name: "Default Query",
+          stateStr: JSON.stringify({ query: "hello world" }, null, 2),
+          createdAt: Date.now(),
+        };
+      }
+
+      if (defaultPreset) {
+        loaded = [defaultPreset];
+        savePresets(activeWorkflowId, loaded);
+      }
+    }
+    setPresets(loaded);
+    setSelectedPresetId("");
+    setNewPresetName("");
+
+    if (loaded.length > 0) {
+      setSelectedPresetId(loaded[0].id);
+      setInitialStateStr(loaded[0].stateStr);
+    }
+  }, [activeWorkflowId]);
   const [visualSpeed, setVisualSpeed] = useState<"fast" | "visualized">("visualized");
   const [pendingApproval, setPendingApproval] = useState<{
     nodeId: string;
@@ -1793,9 +1853,120 @@ function Canvas() {
                   </span>
                 )}
               </div>
+
+              {/* State Presets Toolbar */}
+              <div className="flex flex-col gap-1.5 pt-1 pb-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-mono text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">
+                    Preset:
+                  </span>
+                  <select
+                    value={selectedPresetId}
+                    onChange={(e) => {
+                      const pid = e.target.value;
+                      setSelectedPresetId(pid);
+                      if (pid) {
+                        const found = presets.find((p) => p.id === pid);
+                        if (found) {
+                          setInitialStateStr(found.stateStr);
+                          toast.success(`Applied preset "${found.name}"`);
+                        }
+                      }
+                    }}
+                    disabled={running}
+                    className="flex-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-0.5 px-1.5 font-mono text-[10px] text-[hsl(var(--ink))]"
+                  >
+                    <option value="">-- select preset --</option>
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedPresetId && (
+                    <button
+                      type="button"
+                      disabled={running}
+                      onClick={() => {
+                        const target = presets.find((p) => p.id === selectedPresetId);
+                        if (target) {
+                          if (confirm(`Are you sure you want to delete preset "${target.name}"?`)) {
+                            const next = presets.filter((p) => p.id !== selectedPresetId);
+                            setPresets(next);
+                            savePresets(activeWorkflowId, next);
+                            setSelectedPresetId("");
+                            toast.success(`Deleted preset "${target.name}"`);
+                          }
+                        }
+                      }}
+                      className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-all"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+
+                {/* Save Current as Preset Form */}
+                <div className="flex items-center gap-1.5 pt-1 border-t border-dotted border-[hsl(var(--grid-line))]">
+                  <input
+                    type="text"
+                    value={newPresetName}
+                    disabled={running}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    placeholder="New preset name..."
+                    className="flex-1 bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-0.5 px-1 font-mono text-[10px] text-[hsl(var(--ink))]"
+                  />
+                  <button
+                    type="button"
+                    disabled={running || !newPresetName.trim() || !!initialStateError}
+                    onClick={() => {
+                      const name = newPresetName.trim();
+                      if (!name) return;
+
+                      const existing = presets.find((p) => p.name.toLowerCase() === name.toLowerCase());
+                      let nextPresets = [...presets];
+
+                      if (existing) {
+                        if (!confirm(`A preset named "${existing.name}" already exists. Overwrite it?`)) {
+                          return;
+                        }
+                        nextPresets = presets.map((p) =>
+                          p.id === existing.id
+                            ? { ...p, stateStr: initialStateStr, createdAt: Date.now() }
+                            : p
+                        );
+                        setSelectedPresetId(existing.id);
+                        toast.success(`Overwrote preset "${existing.name}"`);
+                      } else {
+                        const newId = presetCryptoId();
+                        const newPreset: StatePreset = {
+                          id: newId,
+                          name,
+                          stateStr: initialStateStr,
+                          createdAt: Date.now(),
+                        };
+                        nextPresets.push(newPreset);
+                        setSelectedPresetId(newId);
+                        toast.success(`Created preset "${name}"`);
+                      }
+
+                      setPresets(nextPresets);
+                      savePresets(activeWorkflowId, nextPresets);
+                      setNewPresetName("");
+                    }}
+                    className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    Save Preset
+                  </button>
+                </div>
+              </div>
+
               <textarea
                 value={initialStateStr}
-                onChange={(e) => setInitialStateStr(e.target.value)}
+                onChange={(e) => {
+                  setInitialStateStr(e.target.value);
+                  setSelectedPresetId("");
+                }}
                 disabled={running}
                 rows={4}
                 className={`w-full font-mono text-[10px] p-2 bg-transparent border border-dashed outline-none resize-y ${
