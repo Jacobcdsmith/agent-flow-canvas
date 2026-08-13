@@ -80,6 +80,82 @@ All colors MUST be HSL.
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
+  .theme-ice {
+    --background: 205 60% 97%;
+    --foreground: 215 60% 14%;
+    --paper: 205 60% 97%;
+    --ink: 215 80% 22%;
+    --ink-soft: 215 50% 38%;
+    --ink-faint: 210 35% 65%;
+    --grid-line: 210 50% 85%;
+    --accent-cyan: 200 90% 45%;
+    --accent-deep: 220 85% 35%;
+    --gradient-paper: linear-gradient(180deg, hsl(200 70% 98%) 0%, hsl(210 60% 94%) 100%);
+    --gradient-header: linear-gradient(90deg, hsl(210 80% 96%) 0%, hsl(195 85% 92%) 50%, hsl(210 80% 96%) 100%);
+    --gradient-node: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(205 60% 96%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(200 90% 50%) 0%, hsl(220 85% 40%) 100%);
+    --edge-selected: 200 95% 45%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+  }
+
+  .theme-amber {
+    --background: 30 20% 8%;
+    --foreground: 35 100% 60%;
+    --paper: 30 20% 10%;
+    --ink: 35 100% 55%;
+    --ink-soft: 35 80% 45%;
+    --ink-faint: 35 50% 25%;
+    --grid-line: 35 30% 15%;
+    --accent-cyan: 35 100% 50%;
+    --accent-deep: 30 100% 40%;
+    --gradient-paper: linear-gradient(180deg, hsl(30 20% 6%) 0%, hsl(30 20% 10%) 100%);
+    --gradient-header: linear-gradient(90deg, hsl(30 25% 10%) 0%, hsl(30 20% 8%) 100%);
+    --gradient-node: linear-gradient(180deg, hsl(30 20% 10%) 0%, hsl(30 20% 13%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(35 100% 60%) 0%, hsl(30 100% 40%) 100%);
+    --edge-selected: 35 100% 50%;
+    --border: 30 20% 20%;
+    --input: 30 20% 20%;
+  }
+
+  .theme-blueprint {
+    --background: 220 80% 12%;
+    --foreground: 210 100% 95%;
+    --paper: 220 80% 15%;
+    --ink: 210 100% 95%;
+    --ink-soft: 210 70% 75%;
+    --ink-faint: 210 40% 45%;
+    --grid-line: 210 60% 30%;
+    --accent-cyan: 190 100% 60%;
+    --accent-deep: 220 90% 40%;
+    --gradient-paper: linear-gradient(180deg, hsl(220 80% 10%) 0%, hsl(220 80% 16%) 100%);
+    --gradient-header: linear-gradient(90deg, hsl(220 70% 16%) 0%, hsl(220 70% 20%) 100%);
+    --gradient-node: linear-gradient(180deg, hsl(220 60% 16%) 0%, hsl(220 50% 20%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(190 100% 55%) 0%, hsl(220 90% 40%) 100%);
+    --edge-selected: 190 100% 60%;
+    --border: 220 50% 25%;
+    --input: 220 50% 25%;
+  }
+
+  .theme-ink {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --paper: 0 0% 100%;
+    --ink: 0 0% 0%;
+    --ink-soft: 0 0% 20%;
+    --ink-faint: 0 0% 60%;
+    --grid-line: 0 0% 85%;
+    --accent-cyan: 0 0% 15%;
+    --accent-deep: 0 0% 0%;
+    --gradient-paper: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(0 0% 96%) 100%);
+    --gradient-header: linear-gradient(90deg, hsl(0 0% 100%) 0%, hsl(0 0% 94%) 100%);
+    --gradient-node: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(0 0% 98%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(0 0% 20%) 0%, hsl(0 0% 0%) 100%);
+    --edge-selected: 0 0% 10%;
+    --border: 0 0% 80%;
+    --input: 0 0% 80%;
+  }
+
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
