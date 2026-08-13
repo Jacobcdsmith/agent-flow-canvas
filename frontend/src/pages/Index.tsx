@@ -175,6 +175,26 @@ function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
 
+  // ---- Canvas Theme Selector State ----
+  const [canvasTheme, setCanvasTheme] = useState<string>(() => {
+    try {
+      return localStorage.getItem("agent_flow.canvas_theme") || "theme-ice";
+    } catch {
+      return "theme-ice";
+    }
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("theme-ice", "theme-amber", "theme-blueprint", "theme-ink");
+    root.classList.add(canvasTheme);
+    try {
+      localStorage.setItem("agent_flow.canvas_theme", canvasTheme);
+    } catch {
+      // ignore
+    }
+  }, [canvasTheme]);
+
   // ---- Workflows Library State ----
   const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
@@ -1417,6 +1437,20 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          <select
+            value={canvasTheme}
+            onChange={(e) => {
+              setCanvasTheme(e.target.value);
+              toast.success(`Theme changed to ${e.target.selectedOptions[0].text}`);
+            }}
+            className="font-mono text-[10px] sm:text-[11px] bg-transparent px-2 py-1 border border-dashed border-[hsl(var(--ink))] text-[hsl(var(--ink))] outline-none focus:bg-[hsl(var(--paper))] transition-colors cursor-pointer"
+            title="Choose canvas workspace theme"
+          >
+            <option value="theme-ice" className="bg-[hsl(var(--paper))] text-[hsl(var(--ink))]">🎨 Default Ice</option>
+            <option value="theme-amber" className="bg-[hsl(var(--paper))] text-[hsl(var(--ink))]">🎨 Retro Amber</option>
+            <option value="theme-blueprint" className="bg-[hsl(var(--paper))] text-[hsl(var(--ink))]">🎨 Blueprint Grid</option>
+            <option value="theme-ink" className="bg-[hsl(var(--paper))] text-[hsl(var(--ink))]">🎨 Minimal Ink</option>
+          </select>
           <button
             onClick={runValidate}
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
