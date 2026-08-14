@@ -20,6 +20,7 @@ import "reactflow/dist/style.css";
 import { toast } from "sonner";
 
 import { AgentNode } from "@/flow/AgentNode";
+import { NoteNode } from "@/flow/NoteNode";
 import { Palette } from "@/flow/Palette";
 import { Inspector } from "@/flow/Inspector";
 import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
@@ -64,7 +65,7 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 
-const nodeTypes = { agent: AgentNode };
+const nodeTypes = { agent: AgentNode, note: NoteNode };
 
 let idCounter = 100;
 const nextId = () => `n${++idCounter}`;
@@ -174,6 +175,22 @@ function LogItemRow({
 function Canvas() {
   const rf = useReactFlow();
   const isMobile = useIsMobile();
+
+  // ---- Canvas Theme State ----
+  const [canvasTheme, setCanvasTheme] = useState<string>(() => {
+    try {
+      return localStorage.getItem("agent_flow.canvas_theme") || "default";
+    } catch {
+      return "default";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("agent_flow.canvas_theme", canvasTheme);
+    } catch {}
+    document.documentElement.className = canvasTheme === "default" ? "" : `theme-${canvasTheme}`;
+  }, [canvasTheme]);
 
   // ---- Workflows Library State ----
   const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
@@ -565,7 +582,7 @@ function Canvas() {
           : { x: 400, y: 300 };
       const newNode: Node<AgentNodeData> = {
         id,
-        type: "agent",
+        type: meta.kind === "note" ? "note" : "agent",
         position: { x: center.x - 120 + off * 30, y: center.y - 50 + off * 30 },
         data: {
           kind: meta.kind,
@@ -699,7 +716,7 @@ function Canvas() {
       setNodes(
         parsed.nodes.map((n: any) => ({
           id: n.id,
-          type: "agent",
+          type: n.data?.kind === "note" ? "note" : (n.type || "agent"),
           position: n.position ?? { x: 0, y: 0 },
           data: n.data,
         })),
@@ -774,7 +791,7 @@ function Canvas() {
         setNodes(
           parsed.nodes.map((n: any) => ({
             id: n.id,
-            type: "agent",
+            type: n.data?.kind === "note" ? "note" : (n.type || "agent"),
             position: n.position ?? { x: 0, y: 0 },
             data: n.data,
           })),
@@ -1417,6 +1434,19 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          {/* Canvas Theme Selector */}
+          <select
+            value={canvasTheme}
+            onChange={(e) => setCanvasTheme(e.target.value)}
+            title="Switch Visual Canvas Theme"
+            className="font-mono text-[10px] sm:text-[11px] px-1.5 py-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink))] text-[hsl(var(--ink))] outline-none cursor-pointer hover:bg-[hsl(var(--ink)/0.05)] transition-colors"
+          >
+            <option value="default">🎨 Default Ice</option>
+            <option value="retro">🎨 Retro Amber</option>
+            <option value="blueprint">🎨 Blueprint Grid</option>
+            <option value="minimal">🎨 Minimal Ink</option>
+          </select>
+
           <button
             onClick={runValidate}
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"

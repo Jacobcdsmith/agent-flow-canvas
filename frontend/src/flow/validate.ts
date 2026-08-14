@@ -28,6 +28,7 @@ export function validateGraph(
   });
 
   for (const n of nodes) {
+    if (n.data.kind === "note") continue;
     const isEntry = n.data.isEntry || n.data.kind === "trigger";
     const isTerminal = n.data.isTerminal || n.data.kind === "sink";
     const inc = incoming.get(n.id) ?? 0;

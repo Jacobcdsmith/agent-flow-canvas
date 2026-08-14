@@ -8,7 +8,8 @@ export type AgentNodeKind =
   | "human"
   | "sink"
   | "http"
-  | "script";
+  | "script"
+  | "note";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -138,6 +139,16 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     defaultName: "js_script",
     configFields: [
       { key: "code", label: "code", placeholder: "state.query = state.query.toUpperCase();\nreturn state;", type: "textarea" },
+    ],
+  },
+  {
+    kind: "note",
+    label: "Sticky Note",
+    description: "Non-executable visual annotation for documentation and canvas notes.",
+    defaultName: "note",
+    configFields: [
+      { key: "content", label: "content", placeholder: "Write documentation note here...", type: "textarea" },
+      { key: "color", label: "color", placeholder: "yellow", type: "select", options: ["yellow", "blue", "green", "pink", "purple"] },
     ],
   },
 ];
