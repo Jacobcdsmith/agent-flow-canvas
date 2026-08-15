@@ -426,6 +426,12 @@ export function generatePython(
           `state.last = result`,
           `return "next"`,
         ].join("\n");
+      case "note":
+        return [
+          `# Sticky Note Annotation:`,
+          `# ${c.content ? c.content.replace(/\n/g, "\n# ") : "(empty note)"}`,
+          `return "next"`,
+        ].join("\n");
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -614,6 +620,12 @@ export function generateJavaScript(
           `state.last = await runJsScript(${JSON.stringify(c.code || "")}, state);`,
           `return "next";`,
         ].join("\n");
+      case "note":
+        return [
+          `// Sticky Note Annotation:`,
+          `// ${c.content ? c.content.replace(/\n/g, "\n// ") : "(empty note)"}`,
+          `return "next";`,
+        ].join("\n");
       default:
         return `return "next";`;
     }
@@ -665,4 +677,4 @@ export function generateCode(
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note"];

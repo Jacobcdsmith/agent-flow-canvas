@@ -471,6 +471,13 @@ export async function runNode(
         result: state.last_output ?? null,
       };
     }
+    case "note": {
+      return {
+        note: cfg.content || "Sticky Note",
+        color: cfg.color || "yellow",
+        annotationOnly: true,
+      };
+    }
     default:
       return { kind: node.data.kind, note: "no executor" };
   }
