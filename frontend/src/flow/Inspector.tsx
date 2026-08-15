@@ -11,6 +11,7 @@ interface Props {
   gateways?: Gateway[];
   onChange: (id: string, data: Partial<AgentNodeData>) => void;
   onDelete: (id: string) => void;
+  onDuplicate?: (id: string) => void;
   workflows?: Workflow[];
   activeWorkflowId?: string | null;
 }
@@ -22,6 +23,7 @@ export function Inspector({
   gateways = [],
   onChange,
   onDelete,
+  onDuplicate,
   workflows,
   activeWorkflowId,
 }: Props) {
@@ -200,13 +202,23 @@ export function Inspector({
 
       <div className="pt-4">
         {!confirming ? (
-          <button
-            onClick={() => setConfirming(true)}
-            className="w-full text-[10px] uppercase tracking-wider py-2 border border-dashed"
-            style={{ color: "hsl(var(--issue))", borderColor: "hsl(var(--issue))" }}
-          >
-            delete node
-          </button>
+          <div className="flex gap-2">
+            {onDuplicate && (
+              <button
+                onClick={() => onDuplicate(node.id)}
+                className="flex-1 text-[10px] uppercase tracking-wider py-2 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+              >
+                duplicate
+              </button>
+            )}
+            <button
+              onClick={() => setConfirming(true)}
+              className={`${onDuplicate ? "flex-1" : "w-full"} text-[10px] uppercase tracking-wider py-2 border border-dashed`}
+              style={{ color: "hsl(var(--issue))", borderColor: "hsl(var(--issue))" }}
+            >
+              delete node
+            </button>
+          </div>
         ) : (
           <div className="flex gap-2">
             <button

@@ -436,15 +436,22 @@ function Canvas() {
     } catch {}
   }, []);
 
-  // ---- undo stack ----
+  // ---- undo/redo stacks ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+  const redoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
   const skipSnapshot = useRef(false);
+
   const snapshot = useCallback(() => {
+    if (skipSnapshot.current) {
+      skipSnapshot.current = false;
+      return;
+    }
     undoStack.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges)),
     });
     if (undoStack.current.length > 20) undoStack.current.shift();
+    redoStack.current = [];
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
@@ -453,11 +460,69 @@ function Canvas() {
       toast("Nothing to undo");
       return;
     }
+    redoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     skipSnapshot.current = true;
     setNodes(prev.nodes);
     setEdges(prev.edges);
     toast("Undo");
-  }, []);
+  }, [nodes, edges]);
+
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) {
+      toast("Nothing to redo");
+      return;
+    }
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    skipSnapshot.current = true;
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    toast("Redo");
+  }, [nodes, edges]);
+
+  const duplicateNode = useCallback(
+    (nodeId: string) => {
+      const target = nodes.find((n) => n.id === nodeId);
+      if (!target) return;
+      snapshot();
+      const newId = nextId();
+      const duplicatedNode: Node<AgentNodeData> = {
+        ...JSON.parse(JSON.stringify(target)),
+        id: newId,
+        position: {
+          x: target.position.x + 30,
+          y: target.position.y + 30,
+        },
+        data: {
+          ...JSON.parse(JSON.stringify(target.data)),
+          name: `${target.data.name}_copy`,
+        },
+      };
+      setNodes((ns) => [...ns, duplicatedNode]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast(`Node duplicated: ${duplicatedNode.data.name}`);
+    },
+    [nodes, snapshot],
+  );
+
+  const clearCanvas = useCallback(() => {
+    if (nodes.length === 0 && edges.length === 0) return;
+    if (confirm("Are you sure you want to clear the canvas?")) {
+      snapshot();
+      setNodes([]);
+      setEdges([]);
+      setSelectedId(null);
+      setSelectedEdgeId(null);
+      toast("Canvas cleared");
+    }
+  }, [nodes, edges, snapshot]);
 
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
@@ -650,13 +715,22 @@ function Canvas() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
       if (e.key === "Escape") {
         setSelectedId(null);
         setSelectedEdgeId(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedId) deleteNode(selectedId);
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (selectedId) duplicateNode(selectedId);
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        redo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
@@ -664,7 +738,7 @@ function Canvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, duplicateNode, undo, redo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -1448,6 +1522,21 @@ function Canvas() {
           </select>
 
           <button
+            onClick={undo}
+            title="Undo (Ctrl+Z)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ↶ undo
+          </button>
+          <button
+            onClick={redo}
+            title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ↷ redo
+          </button>
+
+          <button
             onClick={runValidate}
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
           >
@@ -1624,8 +1713,40 @@ function Canvas() {
           </ReactFlow>
 
           {!isMobile && (
-            <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-              click edge → select · drag handles → connect · del / esc / ⌘z
+            <div className="absolute top-3 left-3 flex items-center gap-2 pointer-events-auto z-10">
+              <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
+                click edge → select · drag handles → connect · ⌘z / ⌘y / ⌘d
+              </div>
+              <div className="flex gap-1 ml-2 font-mono text-[10px]">
+                <button
+                  onClick={() => rf.zoomIn()}
+                  title="Zoom In"
+                  className="px-2 py-0.5 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+                >
+                  +
+                </button>
+                <button
+                  onClick={() => rf.zoomOut()}
+                  title="Zoom Out"
+                  className="px-2 py-0.5 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+                >
+                  -
+                </button>
+                <button
+                  onClick={() => rf.fitView({ padding: 0.2 })}
+                  title="Fit View"
+                  className="px-2 py-0.5 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors uppercase tracking-wider text-[9px]"
+                >
+                  fit
+                </button>
+                <button
+                  onClick={clearCanvas}
+                  title="Clear Canvas"
+                  className="px-2 py-0.5 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-colors uppercase tracking-wider text-[9px]"
+                >
+                  clear
+                </button>
+              </div>
             </div>
           )}
 
@@ -1687,6 +1808,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -1785,7 +1907,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
