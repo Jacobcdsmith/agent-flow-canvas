@@ -19,7 +19,7 @@ Think of it as a **whiteboard for AI agent design** — fast, frictionless, and 
 ## Features
 
 | Feature | Description |
-|---|---|
+| --- | --- |
 | 🟦 **8 Node Types** | Trigger · LLM Agent · Tool Call · Condition/Router · Subagent · Memory R/W · Human-in-the-Loop · Output Sink |
 | 🔗 **Typed Edges** | Label connections as `next`, `on_success`, `on_error`, `tool_result`, `true`, `false` |
 | 📝 **Live Pseudocode** | Click *view pseudocode* → get Python code generated from your graph in real time |
@@ -34,27 +34,35 @@ Think of it as a **whiteboard for AI agent design** — fast, frictionless, and 
 ## Node Types
 
 ### 🔵 Trigger
+
 Entry point for your agent pipeline. Accepts a webhook, cron schedule, or CLI invocation. Configurable with `source` and `input_schema`.
 
 ### 🧠 LLM Agent
+
 A chat-completion reasoning step. Point it at any model (`gpt-5`, `claude-4`, `gemini-2`, etc.) and define its system/user prompt.
 
 ### 🔧 Tool Call
+
 Invokes a Python function exposed to the agent. Specify the tool name and the argument mapping from agent state.
 
 ### 🔀 Condition / Router
+
 Branches the workflow based on a predicate expression over the agent's state (e.g. `state.confidence > 0.7`). Outputs `true` and `false` edges.
 
 ### 👾 Subagent
+
 Delegates a sub-task to a nested agent graph. Useful for composing multi-agent systems with specialized sub-pipelines.
 
 ### 🗃️ Memory R/W
+
 Reads from or writes to persistent agent memory (e.g. a vector store or key-value store). Configurable operation (`read`/`write`) and memory key.
 
 ### 🙋 Human-in-the-Loop
+
 Pauses execution and waits for human approval or input via Slack, a web UI, or any other channel.
 
 ### 🏁 Output / Sink
+
 Terminal node. Returns the final result to a response, database, or downstream webhook.
 
 ---
@@ -128,4 +136,3 @@ MIT — free to use, modify, and distribute.
 ## Keywords
 
 `ai agent workflow` · `python agent pipeline` · `langgraph visual editor` · `langchain diagram` · `autogen workflow designer` · `drag and drop ai` · `multi-agent orchestration` · `llm workflow builder` · `agent flow canvas` · `python ai tools` · `agentic ai` · `agent framework visual`
-

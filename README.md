@@ -26,7 +26,7 @@ GitHub Pages, Cloudflare Pages, Netlify, S3, or any static host.
 ## Supported providers
 
 | Provider | Base URL default | Auth |
-|---|---|---|
+| --- | --- | --- |
 | OpenAI | `https://api.openai.com/v1` | `Authorization: Bearer …` |
 | OpenAI-compatible (OpenRouter, Groq, Together, vLLM, LM Studio…) | configurable | `Authorization: Bearer …` |
 | Anthropic Claude | `https://api.anthropic.com` | `x-api-key` + `anthropic-dangerous-direct-browser-access` (sent automatically) |
