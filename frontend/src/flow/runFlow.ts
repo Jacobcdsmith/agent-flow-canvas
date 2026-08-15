@@ -179,7 +179,7 @@ export async function runFlow(opts: RunOptions): Promise<RunLog[]> {
 
     try {
       output = await runNode(current, state, gateways, opts, globalsList, secretsList);
-      if (output !== undefined && !(output as Record<string, unknown>).annotationOnly) state.last_output = output;
+      if (output !== undefined) state.last_output = output;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
