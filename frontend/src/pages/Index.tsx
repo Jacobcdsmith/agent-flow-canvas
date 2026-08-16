@@ -436,15 +436,18 @@ function Canvas() {
     } catch {}
   }, []);
 
-  // ---- undo stack ----
+  // ---- undo / redo stacks ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+  const redoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
   const skipSnapshot = useRef(false);
+
   const snapshot = useCallback(() => {
     undoStack.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges)),
     });
     if (undoStack.current.length > 20) undoStack.current.shift();
+    redoStack.current = [];
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
@@ -453,11 +456,31 @@ function Canvas() {
       toast("Nothing to undo");
       return;
     }
+    redoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     skipSnapshot.current = true;
     setNodes(prev.nodes);
     setEdges(prev.edges);
     toast("Undo");
-  }, []);
+  }, [nodes, edges]);
+
+  const redo = useCallback(() => {
+    const nextState = redoStack.current.pop();
+    if (!nextState) {
+      toast("Nothing to redo");
+      return;
+    }
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    skipSnapshot.current = true;
+    setNodes(nextState.nodes);
+    setEdges(nextState.edges);
+    toast("Redo");
+  }, [nodes, edges]);
 
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
@@ -566,6 +589,31 @@ function Canvas() {
     [snapshot],
   );
 
+  const duplicateNode = useCallback(
+    (id: string) => {
+      const target = nodes.find((n) => n.id === id);
+      if (!target) return;
+      snapshot();
+      const newId = nextId();
+      const newName = `${target.data.name}_copy`;
+      const newNode: Node<AgentNodeData> = {
+        id: newId,
+        type: target.type,
+        position: { x: target.position.x + 30, y: target.position.y + 30 },
+        data: {
+          ...JSON.parse(JSON.stringify(target.data)),
+          name: newName,
+          isEntry: false,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast(`Duplicated node "${target.data.name}"`);
+    },
+    [nodes, snapshot],
+  );
+
   const addNode = useCallback(
     (meta: NodeTypeMeta) => {
       snapshot();
@@ -657,6 +705,15 @@ function Canvas() {
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedId) deleteNode(selectedId);
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && selectedId) {
+        e.preventDefault();
+        duplicateNode(selectedId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        redo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
@@ -664,7 +721,7 @@ function Canvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, duplicateNode, deleteEdge, undo, redo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -1625,7 +1682,7 @@ function Canvas() {
 
           {!isMobile && (
             <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-              click edge → select · drag handles → connect · del / esc / ⌘z
+              click edge → select · drag handles → connect · del / esc / ⌘z / ⌘y / ⌘d
             </div>
           )}
 
@@ -1687,6 +1744,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -1785,7 +1843,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
@@ -2220,6 +2278,40 @@ function Canvas() {
             {running && !pendingApproval && (
               <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
                 executing in browser…
+              </div>
+            )}
+
+            {/* Execution Run Metrics Banner */}
+            {runLogs && runLogs.length > 0 && !running && (
+              <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.02)]">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                    Execution Metrics Summary
+                  </span>
+                  <span
+                    className={`font-mono text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 border border-dashed ${
+                      runLogs.some((l) => l.error)
+                        ? "border-[hsl(var(--issue))] text-[hsl(var(--issue))] bg-[hsl(var(--issue)/0.08)]"
+                        : "border-[hsl(var(--ink))] text-[hsl(var(--ink))] bg-[hsl(var(--ink)/0.05)]"
+                    }`}
+                  >
+                    {runLogs.some((l) => l.error) ? "⚠ Errored" : "✓ Success"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 font-mono text-[10px] pt-1">
+                  <div className="border border-dotted border-[hsl(var(--grid-line))] p-1.5 text-center">
+                    <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase tracking-wider">Steps</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">{runLogs.length}</div>
+                  </div>
+                  <div className="border border-dotted border-[hsl(var(--grid-line))] p-1.5 text-center">
+                    <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase tracking-wider">Duration</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">{runLogs.reduce((acc, l) => acc + l.ms, 0)} ms</div>
+                  </div>
+                  <div className="border border-dotted border-[hsl(var(--grid-line))] p-1.5 text-center">
+                    <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase tracking-wider">Node Types</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">{new Set(runLogs.map((l) => l.kind)).size}</div>
+                  </div>
+                </div>
               </div>
             )}
 
