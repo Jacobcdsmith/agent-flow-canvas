@@ -3,14 +3,20 @@ import { TEMPLATES, loadWorkflows, saveWorkflows, cryptoId } from "../flow/workf
 import { runNode, pickNextEdge } from "../flow/runFlow";
 import { Node, Edge } from "reactflow";
 import { AgentNodeData } from "../flow/types";
+import { validateGraph } from "../flow/validate";
 
 describe("Workflows & Stepper Debugger Tests", () => {
   it("should have correct, non-empty default templates configured", () => {
-    expect(TEMPLATES.length).toBeGreaterThanOrEqual(3);
+    expect(TEMPLATES.length).toBeGreaterThanOrEqual(4);
     const reactLoop = TEMPLATES.find((t) => t.id === "template-react");
     expect(reactLoop).toBeDefined();
     expect(reactLoop?.nodes.length).toBeGreaterThan(0);
     expect(reactLoop?.edges.length).toBeGreaterThan(0);
+
+    const chronicleTemplate = TEMPLATES.find((t) => t.id === "template-chronicle-tips");
+    expect(chronicleTemplate).toBeDefined();
+    expect(chronicleTemplate?.description).toContain("personalized");
+    expect(validateGraph(chronicleTemplate?.nodes ?? [], chronicleTemplate?.edges ?? [])).toEqual([]);
   });
 
   it("should support loading, saving, duplicating, and deleting workflows locally", () => {

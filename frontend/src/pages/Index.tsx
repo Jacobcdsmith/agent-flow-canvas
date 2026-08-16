@@ -264,6 +264,32 @@ function Canvas() {
           stateStr: JSON.stringify({ query: "Life is what happens when you're busy making other plans." }, null, 2),
           createdAt: Date.now(),
         };
+      } else if (activeWorkflowId === "template-chronicle-tips") {
+        defaultPreset = {
+          id: "seed-chronicle",
+          name: "Recent Copilot Sessions",
+          stateStr: JSON.stringify({
+            query: "Recommend personalized tips based on my usage patterns.",
+            session_history: [
+              {
+                title: "Repository exploration",
+                summary: "Inspected several files manually before changing code.",
+                tools: ["view", "rg", "glob"],
+              },
+              {
+                title: "Feature implementation",
+                summary: "Made targeted edits and ran validation late in the session.",
+                tools: ["view", "bash", "apply_patch", "report_progress"],
+              },
+              {
+                title: "CI triage",
+                summary: "Jumped into failed job logs quickly and only later reviewed workflow runs.",
+                tools: ["github-mcp-server-get_job_logs", "github-mcp-server-actions_list"],
+              },
+            ],
+          }, null, 2),
+          createdAt: Date.now(),
+        };
       } else if (!activeWorkflowId) {
         defaultPreset = {
           id: "seed-default",

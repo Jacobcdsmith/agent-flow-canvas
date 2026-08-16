@@ -284,6 +284,141 @@ export const TEMPLATES: Workflow[] = [
       { id: "te6", source: "trans-llm-refine", target: "trans-sink", label: "on_success", type: "smoothstep" },
     ],
   },
+  {
+    id: "template-chronicle-tips",
+    name: "/chronicle Tips Review",
+    description: "Review recent session history, extract usage patterns, and generate personalized workflow tips.",
+    isTemplate: true,
+    createdAt: 1700000000000,
+    updatedAt: 1700000000000,
+    nodes: [
+      {
+        id: "chronicle-trigger",
+        type: "agent",
+        position: { x: 360, y: 20 },
+        data: {
+          kind: "trigger",
+          name: "on_chronicle_request",
+          isEntry: true,
+          config: {
+            source: "manual",
+            schema: "{ query: str, session_history: [{ title: str, summary: str, tools: str[] }] }",
+          },
+        },
+      },
+      {
+        id: "chronicle-note",
+        type: "agent",
+        position: { x: 40, y: 130 },
+        data: {
+          kind: "note",
+          name: "chronicle_instructions",
+          config: {
+            color: "blue",
+            content:
+              "Paste recent Copilot sessions into state.session_history. Each item can include title, summary, and tools. The workflow will extract patterns first, then write concise /chronicle-style tips.",
+          },
+        },
+      },
+      {
+        id: "chronicle-script",
+        type: "agent",
+        position: { x: 360, y: 150 },
+        data: {
+          kind: "script",
+          name: "summarize_usage_patterns",
+          config: {
+            code:
+              "const sessions = Array.isArray(state.session_history) ? state.session_history : [];\nconst toolUsage = sessions.reduce((acc, session) => {\n  const tools = Array.isArray(session?.tools) ? session.tools : [];\n  tools.forEach((tool) => {\n    const key = String(tool || '').trim();\n    if (!key) return;\n    acc[key] = (acc[key] || 0) + 1;\n  });\n  return acc;\n}, {});\nconst topTools = Object.entries(toolUsage)\n  .sort((a, b) => Number(b[1]) - Number(a[1]))\n  .slice(0, 5)\n  .map(([name, count]) => `${name}:${count}`);\nstate.session_count = sessions.length;\nstate.top_tools = topTools;\nstate.history_excerpt = sessions\n  .map((session, index) => {\n    const title = session?.title || session?.name || `Session ${index + 1}`;\n    const summary = session?.summary || 'No summary provided';\n    const tools = Array.isArray(session?.tools) && session.tools.length ? ` [tools: ${session.tools.join(', ')}]` : '';\n    return `${index + 1}. ${title} — ${summary}${tools}`;\n  })\n  .join('\\n');\nreturn { sessions: state.session_count, top_tools: state.top_tools, history_excerpt: state.history_excerpt };",
+          },
+        },
+      },
+      {
+        id: "chronicle-router",
+        type: "agent",
+        position: { x: 360, y: 310 },
+        data: {
+          kind: "router",
+          name: "enough_history",
+          config: {
+            predicate: "Array.isArray(state.session_history) && state.session_history.length >= 2",
+          },
+        },
+      },
+      {
+        id: "chronicle-llm",
+        type: "agent",
+        position: { x: 360, y: 470 },
+        data: {
+          kind: "llm",
+          name: "generate_chronicle_tips",
+          config: {
+            model: "gpt-5",
+            prompt:
+              "You are /chronicle tips. Review the user's recent coding sessions and respond with: (1) strengths to keep, (2) 3 personalized tips, and (3) one next experiment. Be concise and actionable.\n\nRecent sessions:\n{{state.history_excerpt}}\n\nTop tools: {{state.top_tools}}\n\nUser request: {{state.query}}",
+          },
+        },
+      },
+      {
+        id: "chronicle-fallback",
+        type: "agent",
+        position: { x: 80, y: 470 },
+        data: {
+          kind: "script",
+          name: "draft_offline_tips",
+          config: {
+            code:
+              "const topTools = Array.isArray(state.top_tools) ? state.top_tools.join(', ') : 'none yet';\nreturn {\n  text: `Strengths to keep: consistent exploration. Personalized tips: batch more searches, delegate long-running work sooner, and save durable memories more often. Next experiment: start each session by planning validation before editing. Top tools seen: ${topTools}.`,\n  source: 'offline-fallback'\n};",
+          },
+        },
+      },
+      {
+        id: "chronicle-missing-history",
+        type: "agent",
+        position: { x: 640, y: 470 },
+        data: {
+          kind: "script",
+          name: "request_more_history",
+          config: {
+            code:
+              "return { text: 'Add at least two session_history entries in the initial state to get personalized /chronicle tips.', source: 'validator' };",
+          },
+        },
+      },
+      {
+        id: "chronicle-memory",
+        type: "agent",
+        position: { x: 220, y: 630 },
+        data: {
+          kind: "memory",
+          name: "save_latest_tips",
+          config: { op: "write", key: "chronicle.tips.latest" },
+        },
+      },
+      {
+        id: "chronicle-sink",
+        type: "agent",
+        position: { x: 220, y: 790 },
+        data: {
+          kind: "sink",
+          name: "return_tips",
+          isTerminal: true,
+          config: { target: "response" },
+        },
+      },
+    ],
+    edges: [
+      { id: "ce1", source: "chronicle-trigger", target: "chronicle-script", label: "next", type: "smoothstep" },
+      { id: "ce2", source: "chronicle-script", target: "chronicle-router", label: "next", type: "smoothstep" },
+      { id: "ce3", source: "chronicle-router", target: "chronicle-llm", label: "true", type: "smoothstep" },
+      { id: "ce4", source: "chronicle-router", target: "chronicle-missing-history", label: "false", type: "smoothstep" },
+      { id: "ce5", source: "chronicle-llm", target: "chronicle-memory", label: "on_success", type: "smoothstep" },
+      { id: "ce6", source: "chronicle-llm", target: "chronicle-fallback", label: "on_error", type: "smoothstep" },
+      { id: "ce7", source: "chronicle-fallback", target: "chronicle-memory", label: "next", type: "smoothstep" },
+      { id: "ce8", source: "chronicle-missing-history", target: "chronicle-sink", label: "next", type: "smoothstep" },
+      { id: "ce9", source: "chronicle-memory", target: "chronicle-sink", label: "next", type: "smoothstep" },
+    ],
+  },
 ];
 
 export function loadWorkflows(): Workflow[] {
