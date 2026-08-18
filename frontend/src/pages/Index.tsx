@@ -64,6 +64,7 @@ import {
   StatePreset,
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
+import { autoLayoutGraph } from "@/flow/graphLayout";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -566,6 +567,32 @@ function Canvas() {
     [snapshot],
   );
 
+  const duplicateNode = useCallback(
+    (id: string) => {
+      const target = nodes.find((n) => n.id === id);
+      if (!target) return;
+      snapshot();
+      const newId = nextId();
+      const newNode: Node<AgentNodeData> = {
+        id: newId,
+        type: target.type,
+        position: {
+          x: target.position.x + 30,
+          y: target.position.y + 30,
+        },
+        data: {
+          ...JSON.parse(JSON.stringify(target.data)),
+          name: `${target.data.name}_copy`,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast(`${target.data.name} duplicated`);
+    },
+    [nodes, snapshot],
+  );
+
   const addNode = useCallback(
     (meta: NodeTypeMeta) => {
       snapshot();
@@ -631,6 +658,18 @@ function Canvas() {
     [snapshot],
   );
 
+  const handleAutoLayout = useCallback(
+    (direction: "TB" | "LR") => {
+      snapshot();
+      const layouted = autoLayoutGraph(nodes, edges, direction);
+      setNodes(layouted);
+      toast.success(
+        `Graph layout updated (${direction === "TB" ? "Top-to-Bottom" : "Left-to-Right"})`
+      );
+    },
+    [nodes, edges, snapshot]
+  );
+
   const cycleEdgeLabel = useCallback(
     (edgeId: string) => {
       snapshot();
@@ -660,6 +699,9 @@ function Canvas() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (selectedId) duplicateNode(selectedId);
       }
     };
     window.addEventListener("keydown", handler);
@@ -1454,6 +1496,20 @@ function Canvas() {
             validate
           </button>
           <button
+            onClick={() => handleAutoLayout("TB")}
+            title="Auto-arrange graph nodes vertically (Top to Bottom)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            layout ↕
+          </button>
+          <button
+            onClick={() => handleAutoLayout("LR")}
+            title="Auto-arrange graph nodes horizontally (Left to Right)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            layout ➔
+          </button>
+          <button
             onClick={() => setShowGateway(true)}
             title={
               gatewayInvalid
@@ -1687,6 +1743,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -1785,7 +1842,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
@@ -1867,6 +1924,68 @@ function Canvas() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
+            {/* Execution Metrics Summary Banner */}
+            {runLogs && runLogs.length > 0 && (
+              <div
+                className="border border-dashed p-3 space-y-2 mb-2 font-mono text-[10px]"
+                style={{
+                  background: runLogs.some((l) => l.error)
+                    ? "hsl(var(--issue) / 0.05)"
+                    : "hsl(var(--ink) / 0.02)",
+                  borderColor: runLogs.some((l) => l.error)
+                    ? "hsl(var(--issue))"
+                    : "hsl(var(--grid-line))",
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))]">
+                    Execution Metrics Summary
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                      running
+                        ? "bg-[hsl(var(--edge-selected))] text-[hsl(var(--paper))]"
+                        : runLogs.some((l) => l.error)
+                          ? "bg-[hsl(var(--issue))] text-[hsl(var(--paper))]"
+                          : "bg-emerald-600 text-white"
+                    }`}
+                  >
+                    {running
+                      ? "Executing"
+                      : runLogs.some((l) => l.error)
+                        ? "Failed"
+                        : "Completed"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-dotted border-[hsl(var(--grid-line))]">
+                  <div>
+                    <div className="text-[hsl(var(--ink-faint))] text-[9px] uppercase tracking-wider">
+                      Total Steps
+                    </div>
+                    <div className="font-bold text-[12px] text-[hsl(var(--ink))]">
+                      {runLogs.length}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[hsl(var(--ink-faint))] text-[9px] uppercase tracking-wider">
+                      Duration
+                    </div>
+                    <div className="font-bold text-[12px] text-[hsl(var(--ink))]">
+                      {runLogs.reduce((acc, l) => acc + (l.ms || 0), 0)} ms
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[hsl(var(--ink-faint))] text-[9px] uppercase tracking-wider">
+                      Node Kinds
+                    </div>
+                    <div className="font-bold text-[12px] text-[hsl(var(--ink))]">
+                      {new Set(runLogs.map((l) => l.kind)).size} unique
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
               <div className="flex items-center justify-between">
