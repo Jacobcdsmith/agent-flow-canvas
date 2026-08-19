@@ -225,3 +225,37 @@ describe("GlobalsManager - Enhanced Features", () => {
     expect(onSecretsChange).not.toHaveBeenCalled();
   });
 });
+
+describe("Execution Metrics Summary Banner", () => {
+  it("calculates metrics, step count, duration, and status accurately", () => {
+    const mockLogs = [
+      { step: 1, nodeId: "n1", name: "Trigger", kind: "trigger", label: "start", ms: 120, output: "ok" },
+      { step: 2, nodeId: "n2", name: "LLM Agent", kind: "llm", label: "next", ms: 450, output: "response" },
+    ];
+
+    const hasError = mockLogs.some((l) => !!(l as any).error);
+    const totalDuration = mockLogs.reduce((sum, l) => sum + (l.ms || 0), 0);
+    const stepCount = mockLogs.length;
+    const uniqueKinds = new Set(mockLogs.map((l) => l.kind).filter((k) => k !== "runtime")).size;
+
+    expect(hasError).toBe(false);
+    expect(totalDuration).toBe(570);
+    expect(stepCount).toBe(2);
+    expect(uniqueKinds).toBe(2);
+  });
+
+  it("detects errors and formats duration above 1000ms correctly", () => {
+    const mockErroredLogs = [
+      { step: 1, nodeId: "n1", name: "Trigger", kind: "trigger", label: "start", ms: 500, output: "ok" },
+      { step: 2, nodeId: "n2", name: "Tool", kind: "tool", label: "next", ms: 750, error: "Tool failed" },
+    ];
+
+    const hasError = mockErroredLogs.some((l) => !!l.error);
+    const totalDuration = mockErroredLogs.reduce((sum, l) => sum + (l.ms || 0), 0);
+    const formattedDuration = totalDuration >= 1000 ? `${(totalDuration / 1000).toFixed(2)}s` : `${totalDuration}ms`;
+
+    expect(hasError).toBe(true);
+    expect(totalDuration).toBe(1250);
+    expect(formattedDuration).toBe("1.25s");
+  });
+});

@@ -64,6 +64,7 @@ import {
   StatePreset,
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
+import { autoLayoutGraph } from "@/flow/graphLayout";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -1434,6 +1435,34 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          {/* Auto Layout Controls */}
+          <div className="flex items-center border border-dashed border-[hsl(var(--ink))]">
+            <button
+              onClick={() => {
+                snapshot();
+                const relaid = autoLayoutGraph(nodes, edges, "TB");
+                setNodes(relaid);
+                toast.success("Auto-layout applied (Top to Bottom)");
+              }}
+              title="Auto-layout graph top-to-bottom"
+              className="font-mono text-[10px] sm:text-[11px] px-1.5 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors border-r border-dashed border-[hsl(var(--ink))]"
+            >
+              ⚡ layout TB
+            </button>
+            <button
+              onClick={() => {
+                snapshot();
+                const relaid = autoLayoutGraph(nodes, edges, "LR");
+                setNodes(relaid);
+                toast.success("Auto-layout applied (Left to Right)");
+              }}
+              title="Auto-layout graph left-to-right"
+              className="font-mono text-[10px] sm:text-[11px] px-1.5 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              LR
+            </button>
+          </div>
+
           {/* Canvas Theme Selector */}
           <select
             value={canvasTheme}
@@ -2220,6 +2249,61 @@ function Canvas() {
             {running && !pendingApproval && (
               <div className="font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.15em] animate-pulse">
                 executing in browser…
+              </div>
+            )}
+
+            {/* Execution Metrics Summary Banner */}
+            {runLogs && runLogs.length > 0 && (
+              <div
+                className="border border-dashed p-3 space-y-2 mb-2 transition-all"
+                style={{
+                  borderColor: runLogs.some((l) => l.error)
+                    ? "hsl(var(--issue))"
+                    : "hsl(var(--edge-selected))",
+                  background: runLogs.some((l) => l.error)
+                    ? "hsl(var(--issue)/0.04)"
+                    : "hsl(var(--edge-selected)/0.04)",
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.15em] font-bold text-[hsl(var(--ink))]">
+                    Execution Metrics Summary
+                  </span>
+                  <span
+                    className={`font-mono text-[9px] uppercase tracking-wider font-bold px-2 py-0.5 border border-dashed ${
+                      runLogs.some((l) => l.error)
+                        ? "bg-[hsl(var(--issue))] text-[hsl(var(--paper))] border-transparent"
+                        : "bg-[hsl(var(--edge-selected))] text-[hsl(var(--paper))] border-transparent"
+                    }`}
+                  >
+                    {runLogs.some((l) => l.error) ? "⚠ FAILED" : "✓ PASSED"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-[10px]">
+                  <div className="p-1.5 border border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] text-center">
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase">Total Duration</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">
+                      {runLogs.reduce((sum, l) => sum + (l.ms || 0), 0) >= 1000
+                        ? `${(runLogs.reduce((sum, l) => sum + (l.ms || 0), 0) / 1000).toFixed(2)}s`
+                        : `${runLogs.reduce((sum, l) => sum + (l.ms || 0), 0)}ms`}
+                    </div>
+                  </div>
+
+                  <div className="p-1.5 border border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] text-center">
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase">Step Count</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">
+                      {runLogs.length} step{runLogs.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+
+                  <div className="p-1.5 border border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] text-center">
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase">Node Types</div>
+                    <div className="font-bold text-[hsl(var(--ink))] mt-0.5">
+                      {new Set(runLogs.map((l) => l.kind).filter((k) => k !== "runtime")).size} unique
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
