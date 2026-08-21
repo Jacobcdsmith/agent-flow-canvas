@@ -23,7 +23,8 @@ import { AgentNode } from "@/flow/AgentNode";
 import { NoteNode } from "@/flow/NoteNode";
 import { Palette } from "@/flow/Palette";
 import { Inspector } from "@/flow/Inspector";
-import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
+import { AgentNodeData, EDGE_LABELS, NODE_TYPES, NodeTypeMeta } from "@/flow/types";
+import { autoLayoutGraph, LayoutDirection } from "@/flow/graphLayout";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
@@ -223,6 +224,8 @@ function Canvas() {
   const [mobilePanel, setMobilePanel] = useState<"none" | "palette" | "inspector">("none");
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [validated, setValidated] = useState(false);
+  const [showCmdSearch, setShowCmdSearch] = useState(false);
+  const [cmdQuery, setCmdQuery] = useState("");
   const addOffsetRef = useRef(0);
 
   // ---- Run state ----
@@ -566,6 +569,48 @@ function Canvas() {
     [snapshot],
   );
 
+  const duplicateNode = useCallback(
+    (targetId?: string | null) => {
+      const idToDup = targetId ?? selectedId;
+      if (!idToDup) return;
+      const target = nodes.find((n) => n.id === idToDup);
+      if (!target) return;
+
+      snapshot();
+      const newId = nextId();
+      const newNode: Node<AgentNodeData> = {
+        id: newId,
+        type: target.type,
+        position: { x: target.position.x + 30, y: target.position.y + 30 },
+        data: {
+          kind: target.data.kind,
+          name: target.data.name.endsWith("_copy")
+            ? `${target.data.name}1`
+            : `${target.data.name}_copy`,
+          config: JSON.parse(JSON.stringify(target.data.config ?? {})),
+          isEntry: target.data.isEntry,
+          isTerminal: target.data.isTerminal,
+          gatewayId: target.data.gatewayId,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast.success(`Duplicated "${target.data.name}"`);
+    },
+    [selectedId, nodes, snapshot],
+  );
+
+  const handleAutoLayout = useCallback(
+    (direction: LayoutDirection) => {
+      snapshot();
+      const laidOut = autoLayoutGraph(nodes, edges, direction);
+      setNodes(laidOut);
+      toast.success(`Layout applied (${direction === "TB" ? "Top-to-Bottom" : "Left-to-Right"})`);
+    },
+    [nodes, edges, snapshot],
+  );
+
   const addNode = useCallback(
     (meta: NodeTypeMeta) => {
       snapshot();
@@ -654,17 +699,24 @@ function Canvas() {
       if (e.key === "Escape") {
         setSelectedId(null);
         setSelectedEdgeId(null);
+        setShowCmdSearch(false);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedId) deleteNode(selectedId);
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (selectedId) duplicateNode(selectedId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCmdSearch((v) => !v);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo, duplicateNode]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -1434,6 +1486,15 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          {/* Canvas Quick Search / Command Palette Button */}
+          <button
+            onClick={() => setShowCmdSearch(true)}
+            title="Quick search nodes and node types (⌘K)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            🔍 search <span className="text-[9px] opacity-60">⌘K</span>
+          </button>
+
           {/* Canvas Theme Selector */}
           <select
             value={canvasTheme}
@@ -1446,6 +1507,22 @@ function Canvas() {
             <option value="blueprint">🎨 Blueprint Grid</option>
             <option value="minimal">🎨 Minimal Ink</option>
           </select>
+
+          {/* Auto Layout Buttons */}
+          <button
+            onClick={() => handleAutoLayout("TB")}
+            title="Auto layout graph top to bottom"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ↓ layout
+          </button>
+          <button
+            onClick={() => handleAutoLayout("LR")}
+            title="Auto layout graph left to right"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            → layout
+          </button>
 
           <button
             onClick={runValidate}
@@ -1687,6 +1764,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -2223,6 +2301,76 @@ function Canvas() {
               </div>
             )}
 
+            {/* Execution Metrics Summary Banner */}
+            {runLogs && runLogs.length > 0 && (() => {
+              const totalDurationMs = runLogs.reduce((sum, l) => sum + (l.ms || 0), 0);
+              const stepCount = runLogs.length;
+              const uniqueKindsCount = new Set(runLogs.map((l) => l.kind)).size;
+              const avgStepMs = Math.round(totalDurationMs / (stepCount || 1));
+              const hasErrors = runLogs.some((l) => l.error);
+
+              return (
+                <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.02)]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.15em] font-semibold text-[hsl(var(--ink-soft))]">
+                      Execution Summary
+                    </span>
+                    <span
+                      className={`font-mono text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 border ${
+                        hasErrors
+                          ? "border-[hsl(var(--issue))] text-[hsl(var(--issue))] bg-[hsl(var(--issue)/0.08)]"
+                          : "border-[hsl(var(--edge-selected))] text-[hsl(var(--edge-selected))] bg-[hsl(var(--edge-selected)/0.08)]"
+                      }`}
+                    >
+                      {hasErrors ? "⚠ Errored" : "✓ Passed"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1.5 font-mono text-[10px] text-center pt-1 border-t border-dotted border-[hsl(var(--grid-line))]">
+                    <div className="p-1 border border-dashed border-[hsl(var(--grid-line))]">
+                      <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase">Duration</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{totalDurationMs}ms</div>
+                    </div>
+                    <div className="p-1 border border-dashed border-[hsl(var(--grid-line))]">
+                      <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase">Steps</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{stepCount}</div>
+                    </div>
+                    <div className="p-1 border border-dashed border-[hsl(var(--grid-line))]">
+                      <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase">Kinds</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{uniqueKindsCount}</div>
+                    </div>
+                    <div className="p-1 border border-dashed border-[hsl(var(--grid-line))]">
+                      <div className="text-[hsl(var(--ink-faint))] text-[8px] uppercase">Avg Step</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{avgStepMs}ms</div>
+                    </div>
+                  </div>
+
+                  {/* Step Timing Breakdown */}
+                  <div className="pt-1">
+                    <span className="font-mono text-[8px] text-[hsl(var(--ink-faint))] uppercase tracking-wider block mb-1">
+                      Step Timing Breakdown
+                    </span>
+                    <div className="h-2 flex w-full border border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--paper))] overflow-hidden">
+                      {runLogs.map((log, idx) => {
+                        const pct = Math.max(3, Math.round(((log.ms || 0) / (totalDurationMs || 1)) * 100));
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              width: `${pct}%`,
+                              background: log.error ? "hsl(var(--issue))" : "hsl(var(--edge-selected))",
+                            }}
+                            title={`Step #${log.step} (${log.name}): ${log.ms}ms`}
+                            className="h-full border-r border-[hsl(var(--paper))]/40"
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Run logs management header/tools */}
             {runLogs && runLogs.length > 0 && (
               <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
@@ -2345,6 +2493,91 @@ function Canvas() {
             setSelectedEdgeId(null);
           }}
         />
+      )}
+
+      {/* Quick Search / Command Palette Modal (⌘K) */}
+      {showCmdSearch && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-[hsl(var(--ink)/0.3)] backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] shadow-xl overflow-hidden font-mono text-[11px]">
+            <div className="p-3 border-b border-dashed border-[hsl(var(--grid-line))] flex items-center gap-2">
+              <span className="text-[hsl(var(--ink-faint))] font-bold">🔍</span>
+              <input
+                autoFocus
+                value={cmdQuery}
+                onChange={(e) => setCmdQuery(e.target.value)}
+                placeholder="Search graph nodes or add node types... (Esc to close)"
+                className="flex-1 bg-transparent border-none outline-none text-[hsl(var(--ink))] placeholder:text-[hsl(var(--ink-faint))]"
+              />
+              <button
+                onClick={() => {
+                  setShowCmdSearch(false);
+                  setCmdQuery("");
+                }}
+                className="text-[10px] uppercase px-1.5 py-0.5 border border-dashed border-[hsl(var(--ink))]"
+              >
+                esc
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto p-2 space-y-3">
+              {/* Existing Graph Nodes */}
+              <div>
+                <div className="text-[9px] uppercase tracking-[0.15em] text-[hsl(var(--ink-faint))] px-2 py-1 font-semibold">
+                  Graph Nodes ({nodes.filter((n) => !cmdQuery || n.data.name.toLowerCase().includes(cmdQuery.toLowerCase()) || n.data.kind.toLowerCase().includes(cmdQuery.toLowerCase())).length})
+                </div>
+                {nodes
+                  .filter((n) => !cmdQuery || n.data.name.toLowerCase().includes(cmdQuery.toLowerCase()) || n.data.kind.toLowerCase().includes(cmdQuery.toLowerCase()))
+                  .map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => {
+                        setSelectedId(n.id);
+                        setSelectedEdgeId(null);
+                        rf.setCenter(n.position.x, n.position.y, { zoom: 1.2, duration: 300 });
+                        setShowCmdSearch(false);
+                        setCmdQuery("");
+                        toast.success(`Focused node "${n.data.name}"`);
+                      }}
+                      className="w-full text-left px-2 py-1.5 hover:bg-[hsl(var(--ink)/0.05)] border border-transparent hover:border-dashed hover:border-[hsl(var(--grid-line))] flex items-center justify-between"
+                    >
+                      <span className="font-semibold text-[hsl(var(--ink))]">{n.data.name}</span>
+                      <span className="text-[9px] uppercase text-[hsl(var(--ink-soft))] px-1 py-0.2 border border-[hsl(var(--grid-line))]">
+                        {n.data.kind}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+
+              {/* Node Palette Types to Add */}
+              <div className="pt-2 border-t border-dotted border-[hsl(var(--grid-line))]">
+                <div className="text-[9px] uppercase tracking-[0.15em] text-[hsl(var(--ink-faint))] px-2 py-1 font-semibold">
+                  Add New Node Type
+                </div>
+                {NODE_TYPES
+                  .filter((meta) => !cmdQuery || meta.label.toLowerCase().includes(cmdQuery.toLowerCase()) || meta.kind.toLowerCase().includes(cmdQuery.toLowerCase()))
+                  .map((meta) => (
+                    <button
+                      key={meta.kind}
+                      onClick={() => {
+                        addNode(meta);
+                        setShowCmdSearch(false);
+                        setCmdQuery("");
+                      }}
+                      className="w-full text-left px-2 py-1.5 hover:bg-[hsl(var(--ink)/0.05)] border border-transparent hover:border-dashed hover:border-[hsl(var(--grid-line))] flex items-center justify-between"
+                    >
+                      <div>
+                        <span className="font-semibold text-[hsl(var(--ink))]">{meta.label}</span>
+                        <span className="text-[9px] text-[hsl(var(--ink-soft))] ml-2">{meta.description}</span>
+                      </div>
+                      <span className="text-[9px] uppercase font-bold text-[hsl(var(--edge-selected))]">
+                        + Add
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
