@@ -64,6 +64,9 @@ import {
   StatePreset,
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
+import { autoLayoutGraph, LayoutDirection } from "@/flow/graphLayout";
+import { CommandPalette } from "@/flow/CommandPalette";
+import { NODE_TYPES, AgentNodeKind } from "@/flow/types";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -191,6 +194,9 @@ function Canvas() {
     } catch {}
     document.documentElement.className = canvasTheme === "default" ? "" : `theme-${canvasTheme}`;
   }, [canvasTheme]);
+
+  // ---- Command Palette State ----
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // ---- Workflows Library State ----
   const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
@@ -459,6 +465,13 @@ function Canvas() {
     toast("Undo");
   }, []);
 
+  const handleAutoLayout = useCallback((dir: LayoutDirection = "TB") => {
+    snapshot();
+    const arranged = autoLayoutGraph(nodes, edges, dir);
+    setNodes(arranged);
+    toast.success(`Graph auto-layout updated (${dir})`);
+  }, [nodes, edges, snapshot]);
+
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
     const m = new Map<string, string>();
@@ -610,6 +623,32 @@ function Canvas() {
     [snapshot],
   );
 
+  const duplicateNode = useCallback(
+    (id: string) => {
+      const target = nodes.find((n) => n.id === id);
+      if (!target) return;
+      snapshot();
+      const newId = nextId();
+      const duplicate: Node<AgentNodeData> = {
+        ...JSON.parse(JSON.stringify(target)),
+        id: newId,
+        position: {
+          x: target.position.x + 30,
+          y: target.position.y + 30,
+        },
+        data: {
+          ...JSON.parse(JSON.stringify(target.data)),
+          name: `${target.data.name}_copy`,
+        },
+      };
+      setNodes((ns) => [...ns, duplicate]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast(`${target.data.name} duplicated`);
+    },
+    [nodes, snapshot],
+  );
+
   const deleteNode = useCallback(
     (id: string) => {
       snapshot();
@@ -660,11 +699,17 @@ function Canvas() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (selectedId) duplicateNode(selectedId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, duplicateNode, undo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -1346,6 +1391,35 @@ function Canvas() {
     }
   }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper]);
 
+  const handleCommandPaletteRun = useCallback((commandId: string) => {
+    switch (commandId) {
+      case "run_flow":
+        runFlowAction();
+        break;
+      case "validate_graph":
+        runValidate();
+        break;
+      case "layout_tb":
+        handleAutoLayout("TB");
+        break;
+      case "layout_lr":
+        handleAutoLayout("LR");
+        break;
+      case "toggle_code":
+        setShowCode((v) => !v);
+        break;
+      case "open_gateways":
+        setShowGateway(true);
+        break;
+      case "open_workflows":
+        setShowWorkflows(true);
+        break;
+      case "open_globals":
+        setShowGlobals(true);
+        break;
+    }
+  }, [runFlowAction, runValidate, handleAutoLayout]);
+
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
     setNodes(ns);
@@ -1446,6 +1520,22 @@ function Canvas() {
             <option value="blueprint">🎨 Blueprint Grid</option>
             <option value="minimal">🎨 Minimal Ink</option>
           </select>
+
+          <button
+            onClick={() => setShowCommandPalette(true)}
+            title="Quick Command Palette & Search (⌘K)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            🔍 ⌘K
+          </button>
+
+          <button
+            onClick={() => handleAutoLayout("TB")}
+            title="Hierarchical Topological Auto-Layout (Top to Bottom)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ⤓ layout
+          </button>
 
           <button
             onClick={runValidate}
@@ -1687,6 +1777,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -1785,7 +1876,7 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
@@ -2223,6 +2314,69 @@ function Canvas() {
               </div>
             )}
 
+            {/* Execution Metrics Summary Banner */}
+            {runLogs && runLogs.length > 0 && (
+              <div className="border-2 border-[hsl(var(--ink))] p-3 space-y-2 mb-2 bg-[hsl(var(--paper))] shadow-xs font-mono text-[10px]">
+                <div className="flex items-center justify-between border-b border-dashed border-[hsl(var(--grid-line))] pb-1.5">
+                  <span className="uppercase tracking-[0.15em] font-semibold text-[hsl(var(--ink-soft))]">
+                    Execution Metrics Summary
+                  </span>
+                  {runLogs.some((l) => !!l.error) ? (
+                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 border border-[hsl(var(--issue))] text-[hsl(var(--issue))] bg-[hsl(var(--issue)/0.08)]">
+                      ⚠ Errored
+                    </span>
+                  ) : stepperSession?.status === "paused" ? (
+                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 border border-[hsl(var(--edge-selected))] text-[hsl(var(--edge-selected))] bg-[hsl(var(--edge-selected)/0.08)]">
+                      ⏸ Paused
+                    </span>
+                  ) : (
+                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 border border-[hsl(var(--ink))] text-[hsl(var(--ink))] bg-[hsl(var(--ink)/0.08)]">
+                      ✓ Completed
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center py-1 bg-[hsl(var(--ink)/0.02)] border border-dashed border-[hsl(var(--grid-line))]">
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Total Steps</div>
+                    <div className="font-bold text-[12px] text-[hsl(var(--ink))]">{runLogs.length}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Duration</div>
+                    <div className="font-bold text-[12px] text-[hsl(var(--ink))]">
+                      {runLogs.reduce((acc, l) => acc + (l.ms || 0), 0)}ms
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Node Kinds</div>
+                    <div className="font-bold text-[11px] text-[hsl(var(--ink))] truncate">
+                      {Array.from(new Set(runLogs.map((l) => l.kind))).length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider truncate max-w-[260px]">
+                    Types: {Array.from(new Set(runLogs.map((l) => l.kind))).join(", ")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const totalMs = runLogs.reduce((acc, l) => acc + (l.ms || 0), 0);
+                      const status = runLogs.some((l) => !!l.error) ? "ERRORED" : "COMPLETED";
+                      const kinds = Array.from(new Set(runLogs.map((l) => l.kind))).join(", ");
+                      const summary = `Flow Execution Summary: ${runLogs.length} steps | Duration: ${totalMs}ms | Status: ${status} | Node Types: ${kinds}`;
+                      navigator.clipboard.writeText(summary);
+                      toast.success("Execution metrics copied to clipboard");
+                    }}
+                    className="text-[9px] uppercase tracking-wider px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+                  >
+                    Copy Summary
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Run logs management header/tools */}
             {runLogs && runLogs.length > 0 && (
               <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
@@ -2346,6 +2500,25 @@ function Canvas() {
           }}
         />
       )}
+
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        nodes={nodes}
+        onSelectNode={(nodeId) => {
+          setSelectedId(nodeId);
+          setSelectedEdgeId(null);
+          const n = nodes.find((item) => item.id === nodeId);
+          if (n && typeof rf.setCenter === "function") {
+            rf.setCenter(n.position.x, n.position.y, { zoom: 1.2, duration: 500 });
+          }
+        }}
+        onAddNodeType={(kind) => {
+          const meta = NODE_TYPES.find((m) => m.kind === kind);
+          if (meta) addNode(meta);
+        }}
+        onRunCommand={handleCommandPaletteRun}
+      />
     </div>
   );
 }
