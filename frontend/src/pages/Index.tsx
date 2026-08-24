@@ -23,11 +23,12 @@ import { AgentNode } from "@/flow/AgentNode";
 import { NoteNode } from "@/flow/NoteNode";
 import { Palette } from "@/flow/Palette";
 import { Inspector } from "@/flow/Inspector";
-import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
+import { AgentNodeData, EDGE_LABELS, NODE_TYPES, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { autoLayoutGraph } from "@/flow/graphLayout";
 import {
   Gateway,
   clearAllKeys as clearAllGatewayKeys,
@@ -224,6 +225,10 @@ function Canvas() {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
+
+  // ---- Command Palette State ----
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
 
   // ---- Run state ----
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
@@ -436,15 +441,17 @@ function Canvas() {
     } catch {}
   }, []);
 
-  // ---- undo stack ----
+  // ---- Undo/Redo stack ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
-  const skipSnapshot = useRef(false);
+  const redoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+
   const snapshot = useCallback(() => {
     undoStack.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges)),
     });
-    if (undoStack.current.length > 20) undoStack.current.shift();
+    if (undoStack.current.length > 25) undoStack.current.shift();
+    redoStack.current = [];
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
@@ -453,11 +460,65 @@ function Canvas() {
       toast("Nothing to undo");
       return;
     }
-    skipSnapshot.current = true;
+    redoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     setNodes(prev.nodes);
     setEdges(prev.edges);
     toast("Undo");
-  }, []);
+  }, [nodes, edges]);
+
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) {
+      toast("Nothing to redo");
+      return;
+    }
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    toast("Redo");
+  }, [nodes, edges]);
+
+  const duplicateNode = useCallback(
+    (targetId: string) => {
+      const targetNode = nodes.find((n) => n.id === targetId);
+      if (!targetNode) return;
+      snapshot();
+      const id = nextId();
+      const newNode: Node<AgentNodeData> = {
+        ...JSON.parse(JSON.stringify(targetNode)),
+        id,
+        position: {
+          x: targetNode.position.x + 30,
+          y: targetNode.position.y + 30,
+        },
+        data: {
+          ...JSON.parse(JSON.stringify(targetNode.data)),
+          name: `${targetNode.data.name}_copy`,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(id);
+      setSelectedEdgeId(null);
+      toast(`Duplicated node "${targetNode.data.name}"`);
+    },
+    [nodes, snapshot]
+  );
+
+  const handleAutoLayout = useCallback(
+    (direction: "TB" | "LR" = "TB") => {
+      snapshot();
+      const layouted = autoLayoutGraph(nodes, edges, { direction });
+      setNodes(layouted);
+      toast(`Graph auto-arranged (${direction === "TB" ? "Top-to-Bottom" : "Left-to-Right"})`);
+    },
+    [nodes, edges, snapshot]
+  );
 
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
@@ -651,20 +712,42 @@ function Canvas() {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+        setCommandQuery("");
+        return;
+      }
+
       if (e.key === "Escape") {
         setSelectedId(null);
         setSelectedEdgeId(null);
+        setShowCommandPalette(false);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedId) deleteNode(selectedId);
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        if (selectedId) {
+          e.preventDefault();
+          duplicateNode(selectedId);
+        }
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        if (e.shiftKey) {
+          e.preventDefault();
+          redo();
+        } else {
+          e.preventDefault();
+          undo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
-        undo();
+        redo();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, duplicateNode, undo, redo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -680,10 +763,6 @@ function Canvas() {
     [nodes, edges, codeLang, globals, secrets],
   );
   const pseudocode = generated.code;
-  const codeLintIssues = useMemo(
-    () => (codeLang === "python" ? lintPython(generated.code) : []),
-    [codeLang, generated.code],
-  );
 
   // export / import
   const exportJSON = useCallback(() => {
@@ -738,10 +817,6 @@ function Canvas() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * Package and download the current workflow's nodes and edges
-   * as a serialized JSON file on the local file system.
-   */
   const downloadJSON = useCallback(() => {
     const data = JSON.stringify(
       {
@@ -770,12 +845,6 @@ function Canvas() {
     toast("Workflow downloaded");
   }, [nodes, edges]);
 
-  /**
-   * Handle the local workspace JSON file upload event, parsing the contents
-   * and updating the current workflow's nodes and edges on success.
-   *
-   * @param e The change event from the hidden HTML file input element.
-   */
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1064,7 +1133,6 @@ function Canvas() {
     toast(`Paused at next node "${nextNode.data.name}"`);
   }, [nodes, edges, gateways, globals, secrets, stepperSession]);
 
-  // Stop debugger and reset stepper
   const stopStepper = useCallback(() => {
     setStepperSession(null);
     setRunning(false);
@@ -1077,7 +1145,6 @@ function Canvas() {
     toast("Debugger session stopped");
   }, [pendingApproval]);
 
-  // Resume full-speed auto execution starting from current debugger position, respecting breakpoints
   const resumeStepper = useCallback(async () => {
     if (!stepperSession || !stepperSession.currentNodeId) return;
     toast("Resuming flow execution...");
@@ -1089,7 +1156,6 @@ function Canvas() {
     let curPrevEdgeLabel: string = stepperSession.prevEdgeLabel;
 
     while (curId) {
-      // Respect Breakpoints
       if (breakpoints.has(curId) && curStep !== stepperSession.step) {
         const nextNode = nodes.find((n) => n.id === curId);
         const sessionUpdate = {
@@ -1250,7 +1316,6 @@ function Canvas() {
   }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints]);
 
   const runFlowAction = useCallback(async () => {
-    // If stepMode is active, trigger stepper initialization instead of full auto run
     if (stepMode) {
       initStepper();
       return;
@@ -1355,13 +1420,12 @@ function Canvas() {
     setSelectedEdgeId(null);
   }, [snapshot]);
 
-  // Expand / Collapse and Clear logs actions
   const handleLogsExpandAll = () => {
     if (!runLogs) return;
     const patch: Record<string, boolean> = {};
     runLogs.forEach((l) => {
       if (l.stateSnapshot) {
-        patch[`${l.step}-${l.nodeId}`] = true;
+        patch[`${l.step}-${l.nodeId}-0`] = true;
       }
     });
     setExpandedLogSnapshots(patch);
@@ -1409,6 +1473,44 @@ function Canvas() {
     });
   }, [runLogs, logsSearchQuery]);
 
+  // Execution Metrics Summary calculation
+  const executionMetrics = useMemo(() => {
+    if (!runLogs || runLogs.length === 0) return null;
+    const totalSteps = runLogs.length;
+    const totalDuration = runLogs.reduce((acc, curr) => acc + (curr.ms || 0), 0);
+    const uniqueKinds = new Set(runLogs.map((l) => l.kind)).size;
+    const hasError = runLogs.some((l) => !!l.error);
+    return {
+      totalSteps,
+      totalDuration,
+      uniqueKinds,
+      hasError,
+    };
+  }, [runLogs]);
+
+  // Filter command palette options
+  const commandCanvasNodes = useMemo(() => {
+    const q = commandQuery.trim().toLowerCase();
+    if (!q) return nodes;
+    return nodes.filter(
+      (n) =>
+        n.data.name.toLowerCase().includes(q) ||
+        n.data.kind.toLowerCase().includes(q) ||
+        n.id.toLowerCase().includes(q)
+    );
+  }, [nodes, commandQuery]);
+
+  const commandNodeTypes = useMemo(() => {
+    const q = commandQuery.trim().toLowerCase();
+    if (!q) return NODE_TYPES;
+    return NODE_TYPES.filter(
+      (m) =>
+        m.label.toLowerCase().includes(q) ||
+        m.kind.toLowerCase().includes(q) ||
+        m.description.toLowerCase().includes(q)
+    );
+  }, [commandQuery]);
+
   return (
     <div
       className="h-screen w-screen flex flex-col text-[hsl(var(--ink))] overflow-hidden"
@@ -1431,9 +1533,56 @@ function Canvas() {
           </span>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Undo & Redo buttons */}
+          <button
+            onClick={undo}
+            title="Undo last action (⌘Z / Ctrl+Z)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ↶ undo
+          </button>
+          <button
+            onClick={redo}
+            title="Redo last action (⌘Y / Ctrl+Y / ⌘⇧Z)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ↷ redo
+          </button>
+
+          {/* Auto Layout controls */}
+          <div className="hidden lg:flex items-center border border-dashed border-[hsl(var(--ink))]">
+            <button
+              onClick={() => handleAutoLayout("TB")}
+              title="Auto-arrange graph layout Top-to-Bottom"
+              className="font-mono text-[10px] px-2 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+            >
+              Layout ↕ TB
+            </button>
+            <button
+              onClick={() => handleAutoLayout("LR")}
+              title="Auto-arrange graph layout Left-to-Right"
+              className="font-mono text-[10px] px-2 py-1 border-l border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+            >
+              ↔ LR
+            </button>
+          </div>
+
+          {/* Command Palette Button */}
+          <button
+            onClick={() => {
+              setShowCommandPalette(true);
+              setCommandQuery("");
+            }}
+            title="Quick search nodes or insert node types (⌘K / Ctrl+K)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ⌘K search
+          </button>
+
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+
           {/* Canvas Theme Selector */}
           <select
             value={canvasTheme}
@@ -1625,7 +1774,7 @@ function Canvas() {
 
           {!isMobile && (
             <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-              click edge → select · drag handles → connect · del / esc / ⌘z
+              click edge → select · drag handles → connect · del / esc / ⌘z / ⌘d / ⌘k
             </div>
           )}
 
@@ -1687,6 +1836,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -1785,12 +1935,12 @@ function Canvas() {
             <button onClick={() => setMobilePanel("none")} className="font-mono text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))]">close</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
+            <Inspector node={selected} edges={edges} nodes={nodes} gateways={gateways} onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode} workflows={workflows} activeWorkflowId={activeWorkflowId} />
           </div>
         </div>
       )}
 
-      {/* Mobile: code drawer (full screen overlay) */}
+      {/* Mobile: code drawer */}
       {isMobile && showCode && (
         <div className="fixed inset-0 z-30 flex flex-col bg-[hsl(var(--paper))] animate-in slide-in-from-bottom duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
@@ -1832,7 +1982,112 @@ function Canvas() {
         </div>
       )}
 
-      {/* MCP gateway run drawer (desktop + mobile) */}
+      {/* Command Palette Modal */}
+      {showCommandPalette && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-[hsl(var(--ink)/0.35)] backdrop-blur-sm">
+          <div className="w-full max-w-xl bg-[hsl(var(--paper))] border-2 border-[hsl(var(--ink))] flex flex-col shadow-2xl relative overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-dashed border-[hsl(var(--grid-line))]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em] font-semibold text-[hsl(var(--ink-soft))]">
+                Command Palette (⌘K)
+              </span>
+              <button
+                onClick={() => setShowCommandPalette(false)}
+                className="font-mono text-[10px] px-1.5 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+              >
+                Esc
+              </button>
+            </div>
+            <div className="p-3 border-b border-dashed border-[hsl(var(--grid-line))]">
+              <input
+                type="text"
+                autoFocus
+                value={commandQuery}
+                onChange={(e) => setCommandQuery(e.target.value)}
+                placeholder="Search canvas nodes or available node types to add..."
+                className="w-full bg-transparent border-b border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1.5 px-2 font-mono text-xs text-[hsl(var(--ink))]"
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto p-2 space-y-3 font-mono text-[11px]">
+              {/* Nodes on Canvas */}
+              <div>
+                <div className="text-[9px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))] px-2 py-1 font-semibold">
+                  Nodes on Canvas ({commandCanvasNodes.length})
+                </div>
+                {commandCanvasNodes.length === 0 ? (
+                  <div className="px-2 text-[10px] text-[hsl(var(--ink-faint))] italic">
+                    No nodes match query
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {commandCanvasNodes.map((n) => (
+                      <button
+                        key={n.id}
+                        onClick={() => {
+                          setSelectedId(n.id);
+                          setSelectedEdgeId(null);
+                          if (typeof rf.setCenter === "function") {
+                            rf.setCenter(n.position.x + 100, n.position.y + 50, { zoom: 1.2, duration: 400 });
+                          }
+                          setShowCommandPalette(false);
+                          toast(`Focused node "${n.data.name}"`);
+                        }}
+                        className="w-full text-left px-2 py-1.5 border border-dashed border-[hsl(var(--grid-line))] hover:border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink)/0.03)] flex items-center justify-between transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{n.data.name}</span>
+                          <span className="text-[9px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">
+                            ({n.data.kind})
+                          </span>
+                        </div>
+                        <span className="text-[9px] uppercase tracking-widest text-[hsl(var(--edge-selected))]">
+                          Focus →
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Add Node Types */}
+              <div>
+                <div className="text-[9px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))] px-2 py-1 font-semibold border-t border-dashed border-[hsl(var(--grid-line))] pt-2">
+                  Add Available Node Types ({commandNodeTypes.length})
+                </div>
+                {commandNodeTypes.length === 0 ? (
+                  <div className="px-2 text-[10px] text-[hsl(var(--ink-faint))] italic">
+                    No node types match query
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {commandNodeTypes.map((meta) => (
+                      <button
+                        key={meta.kind}
+                        onClick={() => {
+                          addNode(meta);
+                          setShowCommandPalette(false);
+                        }}
+                        className="text-left p-2 border border-dashed border-[hsl(var(--grid-line))] hover:border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink)/0.03)] flex flex-col justify-between transition-colors"
+                      >
+                        <div className="font-semibold text-[11px] flex items-center justify-between">
+                          <span>+ {meta.label}</span>
+                          <span className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">
+                            {meta.kind}
+                          </span>
+                        </div>
+                        <div className="text-[9px] text-[hsl(var(--ink-soft))] truncate mt-0.5">
+                          {meta.description}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Execution Run Drawer */}
       {showRun && (
         <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-[440px] flex flex-col bg-[hsl(var(--paper))] border-l-2 border-[hsl(var(--ink))] animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
@@ -1867,6 +2122,47 @@ function Canvas() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
+
+            {/* Execution Metrics Summary Banner */}
+            {executionMetrics && !running && (
+              <div
+                className="border-2 p-3 font-mono text-[10px] space-y-2 mb-2 transition-all shadow-sm"
+                style={{
+                  borderColor: executionMetrics.hasError ? "hsl(var(--issue))" : "hsl(var(--edge-selected))",
+                  background: executionMetrics.hasError ? "hsl(var(--issue)/0.04)" : "hsl(var(--edge-selected)/0.04)",
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))]">
+                    Execution Metrics Summary
+                  </span>
+                  {executionMetrics.hasError ? (
+                    <span className="px-2 py-0.5 text-[9px] uppercase font-bold tracking-wider text-[hsl(var(--paper))] bg-[hsl(var(--issue))]">
+                      FAILED ⚠
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 text-[9px] uppercase font-bold tracking-wider text-[hsl(var(--paper))] bg-[hsl(var(--edge-selected))]">
+                      PASSED ✓
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-dashed border-[hsl(var(--grid-line))] text-center">
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Total Steps</div>
+                    <div className="text-[13px] font-bold text-[hsl(var(--ink))]">{executionMetrics.totalSteps}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Duration</div>
+                    <div className="text-[13px] font-bold text-[hsl(var(--ink))]">{executionMetrics.totalDuration} ms</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-[hsl(var(--ink-faint))] uppercase tracking-wider">Node Kinds</div>
+                    <div className="text-[13px] font-bold text-[hsl(var(--ink))]">{executionMetrics.uniqueKinds}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
               <div className="flex items-center justify-between">
@@ -2172,7 +2468,6 @@ function Canvas() {
                   {pendingApproval.prompt}
                 </div>
 
-                {/* Custom feedback input */}
                 <div className="space-y-1 pt-1">
                   <span className="font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--ink-faint))] block">
                     Optionally provide custom feedback or instruction:
