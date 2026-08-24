@@ -26,6 +26,7 @@ import { Inspector } from "@/flow/Inspector";
 import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
+import { autoLayoutGraph } from "@/flow/graphLayout";
 import { validateGraph, ValidationIssue } from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
@@ -64,6 +65,7 @@ import {
   StatePreset,
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
+import { CommandPalette } from "@/flow/CommandPalette";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -196,6 +198,7 @@ function Canvas() {
   const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // Initialize nodes and edges based on active workflow id
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
@@ -566,6 +569,46 @@ function Canvas() {
     [snapshot],
   );
 
+  const duplicateNode = useCallback(
+    (id: string) => {
+      const sourceNode = nodes.find((n) => n.id === id);
+      if (!sourceNode) return;
+      snapshot();
+      const newId = nextId();
+      const newNode: Node<AgentNodeData> = {
+        id: newId,
+        type: sourceNode.type,
+        position: {
+          x: sourceNode.position.x + 30,
+          y: sourceNode.position.y + 30,
+        },
+        data: {
+          ...JSON.parse(JSON.stringify(sourceNode.data)),
+          name: `${sourceNode.data.name}_copy`,
+        },
+      };
+      setNodes((ns) => [...ns, newNode]);
+      setSelectedId(newId);
+      setSelectedEdgeId(null);
+      toast.success(`Duplicated "${sourceNode.data.name}"`);
+    },
+    [nodes, snapshot],
+  );
+
+  const handleAutoLayout = useCallback(
+    (direction: "TB" | "LR") => {
+      if (nodes.length === 0) return;
+      snapshot();
+      const layouted = autoLayoutGraph(nodes, edges, { direction });
+      setNodes(layouted);
+      if (typeof rf.fitView === "function") {
+        setTimeout(() => rf.fitView({ padding: 0.2 }), 50);
+      }
+      toast.success(`Graph layout updated (${direction === "TB" ? "Top-to-Bottom" : "Left-to-Right"})`);
+    },
+    [nodes, edges, rf, snapshot],
+  );
+
   const addNode = useCallback(
     (meta: NodeTypeMeta) => {
       snapshot();
@@ -660,6 +703,12 @@ function Canvas() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (selectedId) duplicateNode(selectedId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handler);
@@ -1434,6 +1483,15 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+          {/* Quick Search / Command Palette trigger */}
+          <button
+            onClick={() => setShowCommandPalette(true)}
+            title="Open Command Palette / Quick Search (⌘K)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors flex items-center gap-1"
+          >
+            🔍 <span className="hidden sm:inline">search (⌘K)</span>
+          </button>
+
           {/* Canvas Theme Selector */}
           <select
             value={canvasTheme}
@@ -1446,6 +1504,24 @@ function Canvas() {
             <option value="blueprint">🎨 Blueprint Grid</option>
             <option value="minimal">🎨 Minimal Ink</option>
           </select>
+
+          {/* Auto Layout Toolbar Action */}
+          <div className="hidden md:flex border border-dashed border-[hsl(var(--ink))]">
+            <button
+              onClick={() => handleAutoLayout("TB")}
+              title="Auto-arrange graph Top-to-Bottom"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              layout ⬇ TB
+            </button>
+            <button
+              onClick={() => handleAutoLayout("LR")}
+              title="Auto-arrange graph Left-to-Right"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border-l border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              layout ➔ LR
+            </button>
+          </div>
 
           <button
             onClick={runValidate}
@@ -1687,6 +1763,7 @@ function Canvas() {
               gateways={gateways}
               onChange={updateNode}
               onDelete={deleteNode}
+              onDuplicate={duplicateNode}
               workflows={workflows}
               activeWorkflowId={activeWorkflowId}
             />
@@ -2223,6 +2300,43 @@ function Canvas() {
               </div>
             )}
 
+            {/* Execution Metrics Summary Banner */}
+            {runLogs && runLogs.length > 0 && (() => {
+              const totalMs = runLogs.reduce((acc, l) => acc + l.ms, 0);
+              const uniqueKinds = new Set(runLogs.map((l) => l.kind)).size;
+              const hasError = runLogs.some((l) => l.error);
+              return (
+                <div className="border border-dashed border-[hsl(var(--grid-line))] p-2.5 mb-2 bg-[hsl(var(--ink)/0.02)] space-y-1.5 font-mono">
+                  <div className="flex items-center justify-between border-b border-dotted border-[hsl(var(--grid-line))] pb-1 text-[9px] uppercase tracking-wider text-[hsl(var(--ink-soft))] font-semibold">
+                    <span>Execution Metrics Summary</span>
+                    <span
+                      className={`font-bold px-1.5 py-0.2 border ${
+                        hasError
+                          ? "text-[hsl(var(--issue))] border-[hsl(var(--issue))]"
+                          : "text-emerald-700 dark:text-emerald-400 border-emerald-600"
+                      }`}
+                    >
+                      {hasError ? "STATUS: ERROR ✗" : "STATUS: PASS ✓"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                    <div className="border border-dashed border-[hsl(var(--grid-line))] p-1 bg-[hsl(var(--paper))]">
+                      <div className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">Steps</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{runLogs.length}</div>
+                    </div>
+                    <div className="border border-dashed border-[hsl(var(--grid-line))] p-1 bg-[hsl(var(--paper))]">
+                      <div className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">Duration</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{totalMs}ms</div>
+                    </div>
+                    <div className="border border-dashed border-[hsl(var(--grid-line))] p-1 bg-[hsl(var(--paper))]">
+                      <div className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">Node Types</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{uniqueKinds}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Run logs management header/tools */}
             {runLogs && runLogs.length > 0 && (
               <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
@@ -2334,6 +2448,19 @@ function Canvas() {
           onOpenGateway={() => setShowGateway(true)}
         />
       )}
+
+      <CommandPalette
+        isOpen={showCommandPalette}
+        nodes={nodes}
+        onClose={() => setShowCommandPalette(false)}
+        onSelectNode={(id) => {
+          setSelectedId(id);
+          setSelectedEdgeId(null);
+        }}
+        onAddNodeType={(meta) => {
+          addNode(meta);
+        }}
+      />
 
       {showSample && (
         <SampleWalkthrough
