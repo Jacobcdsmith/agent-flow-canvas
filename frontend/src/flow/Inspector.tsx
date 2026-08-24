@@ -11,6 +11,7 @@ interface Props {
   gateways?: Gateway[];
   onChange: (id: string, data: Partial<AgentNodeData>) => void;
   onDelete: (id: string) => void;
+  onDuplicate?: (id: string) => void;
   workflows?: Workflow[];
   activeWorkflowId?: string | null;
 }
@@ -22,6 +23,7 @@ export function Inspector({
   gateways = [],
   onChange,
   onDelete,
+  onDuplicate,
   workflows,
   activeWorkflowId,
 }: Props) {
@@ -198,7 +200,16 @@ export function Inspector({
         ))}
       </div>
 
-      <div className="pt-4">
+      <div className="pt-4 space-y-2">
+        {onDuplicate && (
+          <button
+            onClick={() => onDuplicate(node.id)}
+            className="w-full text-[10px] uppercase tracking-wider py-2 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            duplicate node (⌘D)
+          </button>
+        )}
+
         {!confirming ? (
           <button
             onClick={() => setConfirming(true)}
