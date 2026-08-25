@@ -27,7 +27,12 @@ import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { autoLayoutGraph } from "@/flow/graphLayout";
-import { validateGraph, ValidationIssue } from "@/flow/validate";
+import {
+  fixNoTrigger,
+  fixRouterBranches,
+  validateGraph,
+  ValidationIssue,
+} from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   Gateway,
@@ -66,6 +71,14 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  ExecutionRunRecord,
+  addRunToHistory,
+  clearRunHistory,
+  cryptoId as runCryptoId,
+  loadRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -227,6 +240,16 @@ function Canvas() {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
+
+  // ---- Execution Run History State ----
+  const [runHistory, setRunHistory] = useState<ExecutionRunRecord[]>(() =>
+    loadRunHistory(loadActiveWorkflowId())
+  );
+  const [showRunComparisonModal, setShowRunComparisonModal] = useState(false);
+
+  useEffect(() => {
+    setRunHistory(loadRunHistory(activeWorkflowId));
+  }, [activeWorkflowId]);
 
   // ---- Run state ----
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
@@ -875,6 +898,25 @@ function Canvas() {
     else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
   }, [nodes, edges]);
 
+  const handleApplyQuickFix = useCallback(
+    (issue: ValidationIssue) => {
+      snapshot();
+      if (issue.kind === "no-trigger") {
+        const fixed = fixNoTrigger(nodes, edges);
+        setNodes(fixed.nodes);
+        setEdges(fixed.edges);
+        toast.success("Quick-fix: Added default Trigger node");
+      } else if (issue.kind === "router-missing-branch" && issue.nodeId) {
+        const fixed = fixRouterBranches(issue.nodeId, nodes, edges);
+        setNodes(fixed.nodes);
+        setEdges(fixed.edges);
+        toast.success("Quick-fix: Auto-wired missing router branch");
+      }
+      setTimeout(() => runValidate(), 100);
+    },
+    [nodes, edges, snapshot, runValidate]
+  );
+
   // Toggle breakpoint for a specific node
   const toggleBreakpoint = useCallback((nodeId: string) => {
     setBreakpoints((prev) => {
@@ -949,6 +991,35 @@ function Canvas() {
 
     toast(`Debugger session started at node "${entry.data.name}"`);
   }, [nodes, gatewayInvalid, gatewayIssues, initialStateStr, pendingApproval]);
+
+  // Save run record to history helper
+  const recordRun = useCallback(
+    (logs: RunLog[], initialState: Record<string, unknown>) => {
+      if (!logs || logs.length === 0) return;
+      const errored = logs.some((l) => l.error);
+      const totalMs = logs.reduce((acc, l) => acc + l.ms, 0);
+      const finalLog = logs[logs.length - 1];
+      const finalOut = finalLog
+        ? finalLog.output ?? finalLog.stateSnapshot?.last_output ?? null
+        : null;
+
+      const record: ExecutionRunRecord = {
+        id: runCryptoId(),
+        workflowId: activeWorkflowId,
+        timestamp: Date.now(),
+        durationMs: totalMs,
+        status: errored ? "error" : "pass",
+        stepCount: logs.length,
+        initialState,
+        finalOutput: finalOut,
+        logs,
+      };
+
+      const updatedHistory = addRunToHistory(activeWorkflowId, record);
+      setRunHistory(updatedHistory);
+    },
+    [activeWorkflowId]
+  );
 
   // Execute a single step forward in the active stepper session
   const stepForward = useCallback(async (currentSession = stepperSession) => {
@@ -1035,6 +1106,7 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      recordRun(nextHistory, state);
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1052,6 +1124,7 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      recordRun(nextHistory, state);
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1071,6 +1144,7 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      recordRun(nextHistory, state);
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1089,6 +1163,7 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      recordRun(nextHistory, state);
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1111,7 +1186,7 @@ function Canvas() {
     });
 
     toast(`Paused at next node "${nextNode.data.name}"`);
-  }, [nodes, edges, gateways, globals, secrets, stepperSession]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, recordRun]);
 
   // Stop debugger and reset stepper
   const stopStepper = useCallback(() => {
@@ -1234,6 +1309,7 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        recordRun(curHistory, curState);
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1251,6 +1327,7 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        recordRun(curHistory, curState);
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1270,6 +1347,7 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        recordRun(curHistory, curState);
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1288,6 +1366,7 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        recordRun(curHistory, curState);
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1296,7 +1375,7 @@ function Canvas() {
       curStep++;
       curPrevEdgeLabel = String(nextEdge.label ?? "next");
     }
-  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints, recordRun]);
 
   const runFlowAction = useCallback(async () => {
     // If stepMode is active, trigger stepper initialization instead of full auto run
@@ -1371,6 +1450,7 @@ function Canvas() {
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
+      recordRun(logs, parsedState);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
@@ -1393,7 +1473,7 @@ function Canvas() {
         setHighlight(null);
       }, 1500);
     }
-  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper, recordRun]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -1636,17 +1716,44 @@ function Canvas() {
 
       {validated && issues.length > 0 && (
         <div
-          className="shrink-0 px-4 py-1.5 font-mono text-[10px] flex items-center gap-3 border-b border-dashed"
+          className="shrink-0 px-4 py-1.5 font-mono text-[10px] flex items-center gap-3 border-b border-dashed flex-wrap"
           style={{ background: "hsl(var(--issue) / 0.08)", borderColor: "hsl(var(--issue))", color: "hsl(var(--issue))" }}
         >
           <span className="uppercase tracking-[0.2em] font-semibold">{issues.length} issue{issues.length > 1 ? "s" : ""}</span>
-          <span className="truncate">{issues.map((i) => i.message).join("  ·  ")}</span>
-          <button
-            onClick={() => { setIssues([]); setValidated(false); }}
-            className="ml-auto uppercase tracking-wider hover:underline"
-          >
-            dismiss
-          </button>
+          <span className="truncate max-w-[400px]">{issues.map((i) => i.message).join("  ·  ")}</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {issues.map((i, idx) => {
+              if (i.kind === "no-trigger") {
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => handleApplyQuickFix(i)}
+                    className="font-bold px-2 py-0.5 border border-dashed border-[hsl(var(--issue))] bg-[hsl(var(--paper))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-colors text-[9px] uppercase tracking-wider"
+                  >
+                    ⚡ Quick Fix: Add Trigger
+                  </button>
+                );
+              }
+              if (i.kind === "router-missing-branch") {
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => handleApplyQuickFix(i)}
+                    className="font-bold px-2 py-0.5 border border-dashed border-[hsl(var(--issue))] bg-[hsl(var(--paper))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))] transition-colors text-[9px] uppercase tracking-wider"
+                  >
+                    ⚡ Quick Fix: Wire Router
+                  </button>
+                );
+              }
+              return null;
+            })}
+            <button
+              onClick={() => { setIssues([]); setValidated(false); }}
+              className="uppercase tracking-wider hover:underline ml-1"
+            >
+              dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -1944,6 +2051,61 @@ function Canvas() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
+            {/* Run History Selector & Benchmark Toolbar */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                  Execution Run History ({runHistory.length})
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {runHistory.length >= 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRunComparisonModal(true)}
+                      className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-all font-semibold"
+                    >
+                      ⚡ Compare Runs
+                    </button>
+                  )}
+                  {runHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("Clear execution run history for this workflow?")) {
+                          clearRunHistory(activeWorkflowId);
+                          setRunHistory([]);
+                          toast.success("Run history cleared");
+                        }
+                      }}
+                      className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {runHistory.length > 0 && (
+                <select
+                  onChange={(e) => {
+                    const selected = runHistory.find((r) => r.id === e.target.value);
+                    if (selected) {
+                      setRunLogs(selected.logs);
+                      toast.success(`Loaded run logs from ${new Date(selected.timestamp).toLocaleTimeString()}`);
+                    }
+                  }}
+                  className="w-full bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-1 px-1.5 font-mono text-[10px] text-[hsl(var(--ink))]"
+                >
+                  <option value="">-- Load past execution run --</option>
+                  {runHistory.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {new Date(r.timestamp).toLocaleTimeString()} - {r.status.toUpperCase()} ({r.durationMs}ms, {r.stepCount} steps)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
               <div className="flex items-center justify-between">
@@ -2461,6 +2623,13 @@ function Canvas() {
           addNode(meta);
         }}
       />
+
+      {showRunComparisonModal && (
+        <RunComparisonModal
+          runs={runHistory}
+          onClose={() => setShowRunComparisonModal(false)}
+        />
+      )}
 
       {showSample && (
         <SampleWalkthrough
