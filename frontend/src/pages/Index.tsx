@@ -66,6 +66,12 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  loadRunHistory,
+  saveRunRecord,
+  RunRecord,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -232,6 +238,19 @@ function Canvas() {
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
+  const [showRunComparison, setShowRunComparison] = useState(false);
+  const [runHistoryList, setRunHistoryList] = useState<RunRecord[]>(() => loadRunHistory(activeWorkflowId));
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string>("live");
+
+  const refreshRunHistory = useCallback(() => {
+    const list = loadRunHistory(activeWorkflowId);
+    setRunHistoryList(list);
+  }, [activeWorkflowId]);
+
+  useEffect(() => {
+    refreshRunHistory();
+    setSelectedHistoryRunId("live");
+  }, [activeWorkflowId, refreshRunHistory]);
   const [initialStateStr, setInitialStateStr] = useState(() => {
     return JSON.stringify({ query: "hello world" }, null, 2);
   });
@@ -1371,10 +1390,27 @@ function Canvas() {
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
+
+      // Persist completed run to Run History
+      const totalDuration = logs.reduce((acc, l) => acc + l.ms, 0);
+      const finalLog = logs[logs.length - 1];
+      const finalOut = finalLog ? (finalLog.output ?? finalLog.stateSnapshot?.last_output ?? null) : null;
+      saveRunRecord(activeWorkflowId, {
+        workflowId: activeWorkflowId || "default",
+        timestamp: Date.now(),
+        status: errored ? "error" : "pass",
+        durationMs: totalDuration,
+        stepCount: logs.length,
+        initialState: parsedState,
+        logs,
+        finalOutput: finalOut,
+      });
+      refreshRunHistory();
+      setSelectedHistoryRunId("live");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
-      setRunLogs([
+      const errorLogs: RunLog[] = [
         {
           step: 0,
           nodeId: "_error",
@@ -1384,7 +1420,20 @@ function Canvas() {
           error: msg,
           ms: 0,
         },
-      ]);
+      ];
+      setRunLogs(errorLogs);
+      saveRunRecord(activeWorkflowId, {
+        workflowId: activeWorkflowId || "default",
+        timestamp: Date.now(),
+        status: "error",
+        durationMs: 0,
+        stepCount: 1,
+        initialState: parsedState,
+        logs: errorLogs,
+        finalOutput: msg,
+      });
+      refreshRunHistory();
+      setSelectedHistoryRunId("live");
     } finally {
       setRunning(false);
       setPendingApproval(null);
@@ -1921,6 +1970,13 @@ function Canvas() {
             </div>
             <div className="flex gap-1.5">
               <button
+                onClick={() => setShowRunComparison(true)}
+                title="Compare past workflow execution runs side by side"
+                className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+              >
+                ⚖️ Compare
+              </button>
+              <button
                 onClick={runFlowAction}
                 disabled={running}
                 className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-50"
@@ -1943,6 +1999,40 @@ function Canvas() {
               </button>
             </div>
           </div>
+
+          {/* Past Run History Selector Bar */}
+          {runHistoryList.length > 0 && (
+            <div className="px-3 py-1.5 bg-[hsl(var(--ink)/0.02)] border-b border-dashed border-[hsl(var(--grid-line))] flex items-center gap-2">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--ink-faint))] font-semibold">
+                History:
+              </span>
+              <select
+                value={selectedHistoryRunId}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedHistoryRunId(val);
+                  if (val === "live") {
+                    // keep live run logs
+                  } else {
+                    const match = runHistoryList.find((r) => r.id === val);
+                    if (match) {
+                      setRunLogs(match.logs);
+                      toast(`Loaded history run from ${new Date(match.timestamp).toLocaleTimeString()}`);
+                    }
+                  }
+                }}
+                disabled={running}
+                className="flex-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-0.5 px-1.5 font-mono text-[10px] text-[hsl(var(--ink))]"
+              >
+                <option value="live">● Current Live Run Logs</option>
+                {runHistoryList.map((r, idx) => (
+                  <option key={r.id} value={r.id}>
+                    #{runHistoryList.length - idx} · {new Date(r.timestamp).toLocaleTimeString()} [{r.status.toUpperCase()}] ({r.stepCount} steps, {r.durationMs}ms)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex-1 overflow-auto p-3 space-y-2">
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
@@ -2473,6 +2563,13 @@ function Canvas() {
           }}
         />
       )}
+
+      <RunComparisonModal
+        isOpen={showRunComparison}
+        workflowId={activeWorkflowId}
+        onClose={() => setShowRunComparison(false)}
+        onRefreshHistory={refreshRunHistory}
+      />
     </div>
   );
 }
