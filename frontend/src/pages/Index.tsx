@@ -66,6 +66,14 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  ExecutionRunRecord,
+  loadRunHistory,
+  saveRunRecord,
+  deleteRunRecord,
+  clearRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -299,6 +307,13 @@ function Canvas() {
     resolve: (value: string) => void;
   } | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
+
+  // ---- Execution Run History & Comparison State ----
+  const [pastRuns, setPastRuns] = useState<ExecutionRunRecord[]>(() =>
+    loadRunHistory(loadActiveWorkflowId())
+  );
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
 
   // ---- Stepper Debugger State ----
   const [stepMode, setStepMode] = useState(false);
@@ -1335,9 +1350,11 @@ function Canvas() {
     setRunning(true);
     setShowRun(true);
     setRunLogs([]);
+    setSelectedRunId(null);
     const stepDelay = visualSpeed === "visualized" ? 600 : 0;
+    let finalLogs: RunLog[] = [];
     try {
-      const logs = await runFlow({
+      finalLogs = await runFlow({
         nodes,
         edges,
         gateways,
@@ -1367,14 +1384,28 @@ function Canvas() {
           });
         },
       });
-      setRunLogs(logs);
-      const errored = logs.some((l) => l.error);
-      if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
-      else toast.success(`Flow ran in ${logs.length} steps`);
+      setRunLogs(finalLogs);
+      const errored = finalLogs.some((l) => l.error);
+      if (errored) toast.error(`Flow ran with errors (${finalLogs.length} steps)`);
+      else toast.success(`Flow ran in ${finalLogs.length} steps`);
+
+      // Record Execution Run in History
+      const totalMs = finalLogs.reduce((acc, l) => acc + l.ms, 0);
+      const lastLog = finalLogs[finalLogs.length - 1];
+      const record = saveRunRecord(activeWorkflowId, {
+        timestamp: Date.now(),
+        status: errored ? "error" : "pass",
+        totalMs,
+        stepCount: finalLogs.length,
+        initialState: parsedState,
+        finalOutput: lastLog ? (lastLog.error || lastLog.output) : undefined,
+        logs: finalLogs,
+      });
+      setPastRuns((prev) => [record, ...prev]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
-      setRunLogs([
+      const errLogs: RunLog[] = [
         {
           step: 0,
           nodeId: "_error",
@@ -1384,7 +1415,19 @@ function Canvas() {
           error: msg,
           ms: 0,
         },
-      ]);
+      ];
+      setRunLogs(errLogs);
+
+      const record = saveRunRecord(activeWorkflowId, {
+        timestamp: Date.now(),
+        status: "error",
+        totalMs: 0,
+        stepCount: 1,
+        initialState: parsedState,
+        finalOutput: msg,
+        logs: errLogs,
+      });
+      setPastRuns((prev) => [record, ...prev]);
     } finally {
       setRunning(false);
       setPendingApproval(null);
@@ -2300,6 +2343,86 @@ function Canvas() {
               </div>
             )}
 
+            {/* Execution Run History Toolbar & Selector */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)] font-mono">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                  Run History ({pastRuns.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowComparisonModal(true)}
+                  disabled={pastRuns.length === 0}
+                  className="text-[9px] uppercase tracking-wider px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-40 transition-all"
+                >
+                  📊 Compare Runs
+                </button>
+              </div>
+
+              {pastRuns.length > 0 && (
+                <div className="flex items-center gap-1.5 pt-1">
+                  <select
+                    value={selectedRunId || ""}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedRunId(id || null);
+                      if (id) {
+                        const rec = pastRuns.find((r) => r.id === id);
+                        if (rec) {
+                          setRunLogs(rec.logs);
+                          if (rec.initialState) {
+                            setInitialStateStr(JSON.stringify(rec.initialState, null, 2));
+                          }
+                          toast.success(`Loaded run logs from ${new Date(rec.timestamp).toLocaleTimeString()}`);
+                        }
+                      }
+                    }}
+                    className="flex-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] focus:border-[hsl(var(--ink))] outline-none py-0.5 px-1.5 text-[10px] text-[hsl(var(--ink))]"
+                  >
+                    <option value="">-- View Latest Active Run --</option>
+                    {pastRuns.map((r, idx) => (
+                      <option key={r.id} value={r.id}>
+                        Run #{pastRuns.length - idx} ({r.status.toUpperCase()}) - {new Date(r.timestamp).toLocaleTimeString()} ({r.totalMs}ms, {r.stepCount}s)
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedRunId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rec = pastRuns.find((r) => r.id === selectedRunId);
+                        if (rec && confirm("Delete this run record?")) {
+                          const updated = deleteRunRecord(activeWorkflowId, selectedRunId);
+                          setPastRuns(updated);
+                          setSelectedRunId(null);
+                          toast.success("Run record deleted");
+                        }
+                      }}
+                      className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                    >
+                      Delete
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm("Clear all run history for this workflow?")) {
+                        clearRunHistory(activeWorkflowId);
+                        setPastRuns([]);
+                        setSelectedRunId(null);
+                        toast.success("Run history cleared");
+                      }
+                    }}
+                    className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed text-[hsl(var(--ink-soft))] hover:border-[hsl(var(--issue))] hover:text-[hsl(var(--issue))]"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Execution Metrics Summary Banner */}
             {runLogs && runLogs.length > 0 && (() => {
               const totalMs = runLogs.reduce((acc, l) => acc + l.ms, 0);
@@ -2471,6 +2594,14 @@ function Canvas() {
             setSelectedId(id);
             setSelectedEdgeId(null);
           }}
+        />
+      )}
+
+      {showComparisonModal && (
+        <RunComparisonModal
+          runs={pastRuns}
+          initialRunAId={selectedRunId || (pastRuns.length > 0 ? pastRuns[0].id : null)}
+          onClose={() => setShowComparisonModal(false)}
         />
       )}
     </div>
