@@ -27,7 +27,13 @@ import { AgentNodeData, EDGE_LABELS, NodeTypeMeta } from "@/flow/types";
 import { exampleEdges, exampleNodes } from "@/flow/exampleWorkflow";
 import { generateCode, lintPython } from "@/flow/codegen";
 import { autoLayoutGraph } from "@/flow/graphLayout";
-import { validateGraph, ValidationIssue } from "@/flow/validate";
+import {
+  validateGraph,
+  ValidationIssue,
+  fixNoTrigger,
+  fixRouterBranches,
+  fixOrphanNodes,
+} from "@/flow/validate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   Gateway,
@@ -59,6 +65,7 @@ import {
   TEMPLATES,
 } from "@/flow/workflows";
 import { WorkflowsManager } from "@/flow/WorkflowsManager";
+import { WorkspaceManager } from "@/flow/WorkspaceManager";
 import {
   loadPresets,
   savePresets,
@@ -66,6 +73,13 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  RunRecord,
+  loadRunHistory,
+  saveRunRecord,
+  clearRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -199,6 +213,15 @@ function Canvas() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
+
+  // ---- Execution Run History ----
+  const [runHistory, setRunHistory] = useState<RunRecord[]>(() => loadRunHistory(loadActiveWorkflowId()));
+  const [showRunComparison, setShowRunComparison] = useState(false);
+
+  useEffect(() => {
+    setRunHistory(loadRunHistory(activeWorkflowId));
+  }, [activeWorkflowId]);
 
   // Initialize nodes and edges based on active workflow id
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
@@ -875,6 +898,47 @@ function Canvas() {
     else toast.error(`${all.length} issue${all.length > 1 ? "s" : ""} found`);
   }, [nodes, edges]);
 
+  const handleFixAllIssues = useCallback(() => {
+    snapshot();
+    let currentNodes = [...nodes];
+    let currentEdges = [...edges];
+
+    // Check no trigger issue
+    if (issues.some((i) => i.kind === "no-trigger")) {
+      currentNodes = fixNoTrigger(currentNodes);
+    }
+
+    // Check router missing branch issues
+    const routerIssues = issues.filter((i) => i.kind === "router-missing-branch");
+    routerIssues.forEach((issue) => {
+      if (issue.nodeId) {
+        const res = fixRouterBranches(currentNodes, currentEdges, issue.nodeId);
+        currentNodes = res.nodes;
+        currentEdges = res.edges;
+      }
+    });
+
+    // Check orphan node issues
+    if (issues.some((i) => i.kind === "orphan")) {
+      const res = fixOrphanNodes(currentNodes, currentEdges);
+      currentNodes = res.nodes;
+      currentEdges = res.edges;
+    }
+
+    setNodes(currentNodes);
+    setEdges(currentEdges);
+
+    // Re-validate immediately
+    const found = validateGraph(currentNodes, currentEdges);
+    setIssues(found);
+    if (found.length === 0) {
+      toast.success("All graph issues automatically resolved! ⚡");
+      setValidated(false);
+    } else {
+      toast.success(`Applied quick-fixes (${found.length} remaining issue)`);
+    }
+  }, [issues, nodes, edges, snapshot]);
+
   // Toggle breakpoint for a specific node
   const toggleBreakpoint = useCallback((nodeId: string) => {
     setBreakpoints((prev) => {
@@ -1371,6 +1435,25 @@ function Canvas() {
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
+
+      // Record in Run History
+      const wfName = activeWorkflowId
+        ? [...TEMPLATES, ...workflows].find((w) => w.id === activeWorkflowId)?.name || "Custom Workflow"
+        : "Default Canvas Workflow";
+      const record: RunRecord = {
+        id: `run-${Date.now()}`,
+        workflowId: activeWorkflowId || "default",
+        workflowName: wfName,
+        timestamp: Date.now(),
+        durationMs: logs.reduce((acc, l) => acc + l.ms, 0),
+        stepCount: logs.length,
+        hasError: errored,
+        initialState: parsedState,
+        finalState: logs.length > 0 ? logs[logs.length - 1].stateSnapshot : parsedState,
+        logs,
+      };
+      const updatedHistory = saveRunRecord(activeWorkflowId, record);
+      setRunHistory(updatedHistory);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
@@ -1554,6 +1637,14 @@ function Canvas() {
             <span className="sm:hidden">📁 {[...TEMPLATES, ...workflows].length}</span>
           </button>
           <button
+            onClick={() => setShowWorkspaceManager(true)}
+            title="Backup or restore the entire workspace bundle (workflows, presets, globals, secrets, gateways)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">📦 workspace</span>
+            <span className="sm:hidden">📦</span>
+          </button>
+          <button
             onClick={() => setShowGlobals(true)}
             title={`${globals.length} global${globals.length === 1 ? "" : "s"} and ${secrets.length} secret${secrets.length === 1 ? "" : "s"} configured`}
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
@@ -1636,17 +1727,26 @@ function Canvas() {
 
       {validated && issues.length > 0 && (
         <div
-          className="shrink-0 px-4 py-1.5 font-mono text-[10px] flex items-center gap-3 border-b border-dashed"
+          className="shrink-0 px-4 py-1.5 font-mono text-[10px] flex items-center gap-3 border-b border-dashed flex-wrap"
           style={{ background: "hsl(var(--issue) / 0.08)", borderColor: "hsl(var(--issue))", color: "hsl(var(--issue))" }}
         >
           <span className="uppercase tracking-[0.2em] font-semibold">{issues.length} issue{issues.length > 1 ? "s" : ""}</span>
-          <span className="truncate">{issues.map((i) => i.message).join("  ·  ")}</span>
-          <button
-            onClick={() => { setIssues([]); setValidated(false); }}
-            className="ml-auto uppercase tracking-wider hover:underline"
-          >
-            dismiss
-          </button>
+          <span className="truncate max-w-xl">{issues.map((i) => i.message).join("  ·  ")}</span>
+
+          <div className="flex items-center gap-1.5 ml-auto">
+            <button
+              onClick={handleFixAllIssues}
+              className="px-2 py-0.5 border border-dashed border-[hsl(var(--issue))] bg-[hsl(var(--issue))] text-[hsl(var(--paper))] hover:opacity-90 font-bold uppercase tracking-wider text-[9px] transition-all"
+            >
+              ⚡ Quick Fix All
+            </button>
+            <button
+              onClick={() => { setIssues([]); setValidated(false); }}
+              className="uppercase tracking-wider hover:underline text-[9px]"
+            >
+              dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -2090,6 +2190,45 @@ function Canvas() {
               )}
             </div>
 
+            {/* Run History Controls */}
+            <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold">
+                  Execution Run History ({runHistory.length})
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={runHistory.length === 0}
+                    onClick={() => setShowRunComparison(true)}
+                    className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-40 transition-all"
+                  >
+                    Compare Runs 📊
+                  </button>
+                  {runHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("Clear run history for this workflow?")) {
+                          clearRunHistory(activeWorkflowId);
+                          setRunHistory([]);
+                          toast("Run history cleared");
+                        }
+                      }}
+                      className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed text-[hsl(var(--issue))] border-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              {runHistory.length > 0 && (
+                <div className="text-[9px] text-[hsl(var(--ink-faint))] font-mono">
+                  Latest: {new Date(runHistory[0].timestamp).toLocaleTimeString()} - {runHistory[0].hasError ? "✗ ERROR" : "✓ PASS"} ({runHistory[0].durationMs}ms)
+                </div>
+              )}
+            </div>
+
             {/* Visual Speed Selector */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold block">
@@ -2442,6 +2581,19 @@ function Canvas() {
         />
       )}
 
+      {showWorkspaceManager && (
+        <WorkspaceManager
+          onClose={() => setShowWorkspaceManager(false)}
+          onWorkspaceReload={() => {
+            setWorkflows(loadWorkflows());
+            setGlobals(loadGlobals());
+            setSecrets(loadSecrets());
+            setGateways(loadGateways());
+            toast.success("Workspace state reloaded");
+          }}
+        />
+      )}
+
       {showIntro && (
         <IntroTutorial
           onClose={dismissIntro}
@@ -2470,6 +2622,18 @@ function Canvas() {
           selectNode={(id) => {
             setSelectedId(id);
             setSelectedEdgeId(null);
+          }}
+        />
+      )}
+
+      {showRunComparison && (
+        <RunComparisonModal
+          runs={runHistory}
+          onClose={() => setShowRunComparison(false)}
+          onApplyInitialState={(stateStr) => {
+            setInitialStateStr(stateStr);
+            setShowRunComparison(false);
+            toast.success("Applied historical run initial state to editor");
           }}
         />
       )}
