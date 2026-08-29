@@ -66,6 +66,14 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  RunHistoryRecord,
+  loadRunHistory,
+  saveRunRecord,
+  clearRunHistory as clearStoredRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
+import { WorkspaceManager } from "@/flow/WorkspaceManager";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -237,10 +245,20 @@ function Canvas() {
   });
   const [initialStateError, setInitialStateError] = useState<string | null>(null);
 
-  // ---- State Presets ----
+  // ---- State Presets & Run History ----
   const [presets, setPresets] = useState<StatePreset[]>(() => loadPresets(loadActiveWorkflowId()));
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   const [newPresetName, setNewPresetName] = useState<string>("");
+
+  const [runHistory, setRunHistory] = useState<RunHistoryRecord[]>(() => loadRunHistory(loadActiveWorkflowId()));
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string>("");
+  const [showComparison, setShowComparison] = useState<boolean>(false);
+  const [showWorkspaceManager, setShowWorkspaceManager] = useState<boolean>(false);
+
+  useEffect(() => {
+    setRunHistory(loadRunHistory(activeWorkflowId));
+    setSelectedHistoryId("");
+  }, [activeWorkflowId]);
 
   useEffect(() => {
     let loaded = loadPresets(activeWorkflowId);
@@ -439,15 +457,18 @@ function Canvas() {
     } catch {}
   }, []);
 
-  // ---- undo stack ----
+  // ---- undo / redo stacks ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+  const redoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
   const skipSnapshot = useRef(false);
+
   const snapshot = useCallback(() => {
     undoStack.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges)),
     });
-    if (undoStack.current.length > 20) undoStack.current.shift();
+    if (undoStack.current.length > 30) undoStack.current.shift();
+    redoStack.current = [];
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
@@ -456,11 +477,31 @@ function Canvas() {
       toast("Nothing to undo");
       return;
     }
+    redoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     skipSnapshot.current = true;
     setNodes(prev.nodes);
     setEdges(prev.edges);
     toast("Undo");
-  }, []);
+  }, [nodes, edges]);
+
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) {
+      toast("Nothing to redo");
+      return;
+    }
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    skipSnapshot.current = true;
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    toast("Redo");
+  }, [nodes, edges]);
 
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
@@ -702,7 +743,14 @@ function Canvas() {
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        undo();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
         e.preventDefault();
         if (selectedId) duplicateNode(selectedId);
@@ -1371,6 +1419,26 @@ function Canvas() {
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
+
+      // Record to run history
+      if (logs.length > 0) {
+        const totalMs = logs.reduce((acc, l) => acc + l.ms, 0);
+        const wfName = [...TEMPLATES, ...workflows].find((w) => w.id === activeWorkflowId)?.name ?? "Current Workflow";
+        const record: RunHistoryRecord = {
+          id: `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          workflowId: activeWorkflowId,
+          workflowName: wfName,
+          timestamp: Date.now(),
+          durationMs: totalMs,
+          stepCount: logs.length,
+          status: errored ? "error" : "success",
+          logs,
+          initialState: parsedState,
+        };
+        const updated = saveRunRecord(record);
+        setRunHistory(updated);
+        setSelectedHistoryId("");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
@@ -1505,6 +1573,24 @@ function Canvas() {
             <option value="minimal">🎨 Minimal Ink</option>
           </select>
 
+          {/* Undo / Redo Toolbar Controls */}
+          <div className="hidden sm:flex border border-dashed border-[hsl(var(--ink))]">
+            <button
+              onClick={undo}
+              title="Undo last action (⌘Z)"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              ↩ undo
+            </button>
+            <button
+              onClick={redo}
+              title="Redo last action (⌘Y / ⌘Shift+Z)"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border-l border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              ↪ redo
+            </button>
+          </div>
+
           {/* Auto Layout Toolbar Action */}
           <div className="hidden md:flex border border-dashed border-[hsl(var(--ink))]">
             <button
@@ -1552,6 +1638,14 @@ function Canvas() {
           >
             <span className="hidden sm:inline">📁 workflows · {[...TEMPLATES, ...workflows].length}</span>
             <span className="sm:hidden">📁 {[...TEMPLATES, ...workflows].length}</span>
+          </button>
+          <button
+            onClick={() => setShowWorkspaceManager(true)}
+            title="Export or import full workspace bundle files (agent_flow.workspace.v1)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">📦 workspace</span>
+            <span className="sm:hidden">📦</span>
           </button>
           <button
             onClick={() => setShowGlobals(true)}
@@ -1910,13 +2004,23 @@ function Canvas() {
       )}
 
       {/* MCP gateway run drawer (desktop + mobile) */}
-      {showRun && (
+      {showRun && (() => {
+        const activeHistoryRecord = runHistory.find((r) => r.id === selectedHistoryId);
+        const displayedLogs = activeHistoryRecord ? activeHistoryRecord.logs : runLogs;
+
+        return (
         <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-[440px] flex flex-col bg-[hsl(var(--paper))] border-l-2 border-[hsl(var(--ink))] animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-dashed border-[hsl(var(--grid-line))]" style={{ background: "var(--gradient-header)" }}>
             <div>
               <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--ink-faint))]">browser run · log</div>
               <h2 className="font-mono text-sm font-semibold">
-                {running ? "executing flow…" : runLogs ? `${runLogs.length} step${runLogs.length === 1 ? "" : "s"}` : "ready"}
+                {running
+                  ? "executing flow…"
+                  : activeHistoryRecord
+                  ? `History Run (${activeHistoryRecord.stepCount} steps)`
+                  : displayedLogs
+                  ? `${displayedLogs.length} step${displayedLogs.length === 1 ? "" : "s"}`
+                  : "ready"}
               </h2>
             </div>
             <div className="flex gap-1.5">
@@ -1944,6 +2048,51 @@ function Canvas() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
+            {/* Run History Selector Bar */}
+            {runHistory.length > 0 && (
+              <div className="border border-dashed border-[hsl(var(--grid-line))] p-2.5 mb-2 bg-[hsl(var(--ink)/0.02)] space-y-1.5 font-mono">
+                <div className="flex items-center justify-between text-[10px] uppercase font-semibold text-[hsl(var(--ink-soft))]">
+                  <span>📜 Run History ({runHistory.length})</span>
+                  <div className="flex items-center gap-2">
+                    {runHistory.length >= 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowComparison(true)}
+                        className="text-[9px] uppercase font-bold text-[hsl(var(--ink))] hover:underline"
+                      >
+                        Compare Runs ⇄
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("Clear all run history for this workflow?")) {
+                          clearStoredRunHistory(activeWorkflowId);
+                          setRunHistory([]);
+                          setSelectedHistoryId("");
+                          toast.success("Run history cleared");
+                        }
+                      }}
+                      className="text-[9px] uppercase text-[hsl(var(--issue))] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <select
+                  value={selectedHistoryId}
+                  onChange={(e) => setSelectedHistoryId(e.target.value)}
+                  className="w-full bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] p-1 text-[10px] text-[hsl(var(--ink))] font-mono"
+                >
+                  <option value="">● Active / Latest Execution Run</option>
+                  {runHistory.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.status === "success" ? "✓" : "✗"} {new Date(r.timestamp).toLocaleTimeString()} ({r.stepCount} steps, {r.durationMs}ms)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
               <div className="flex items-center justify-between">
@@ -2301,10 +2450,10 @@ function Canvas() {
             )}
 
             {/* Execution Metrics Summary Banner */}
-            {runLogs && runLogs.length > 0 && (() => {
-              const totalMs = runLogs.reduce((acc, l) => acc + l.ms, 0);
-              const uniqueKinds = new Set(runLogs.map((l) => l.kind)).size;
-              const hasError = runLogs.some((l) => l.error);
+            {displayedLogs && displayedLogs.length > 0 && (() => {
+              const totalMs = displayedLogs.reduce((acc, l) => acc + l.ms, 0);
+              const uniqueKinds = new Set(displayedLogs.map((l) => l.kind)).size;
+              const hasError = displayedLogs.some((l) => l.error);
               return (
                 <div className="border border-dashed border-[hsl(var(--grid-line))] p-2.5 mb-2 bg-[hsl(var(--ink)/0.02)] space-y-1.5 font-mono">
                   <div className="flex items-center justify-between border-b border-dotted border-[hsl(var(--grid-line))] pb-1 text-[9px] uppercase tracking-wider text-[hsl(var(--ink-soft))] font-semibold">
@@ -2322,7 +2471,7 @@ function Canvas() {
                   <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
                     <div className="border border-dashed border-[hsl(var(--grid-line))] p-1 bg-[hsl(var(--paper))]">
                       <div className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">Steps</div>
-                      <div className="font-bold text-[hsl(var(--ink))]">{runLogs.length}</div>
+                      <div className="font-bold text-[hsl(var(--ink))]">{displayedLogs.length}</div>
                     </div>
                     <div className="border border-dashed border-[hsl(var(--grid-line))] p-1 bg-[hsl(var(--paper))]">
                       <div className="text-[8px] uppercase tracking-wider text-[hsl(var(--ink-faint))]">Duration</div>
@@ -2338,7 +2487,7 @@ function Canvas() {
             })()}
 
             {/* Run logs management header/tools */}
-            {runLogs && runLogs.length > 0 && (
+            {displayedLogs && displayedLogs.length > 0 && (
               <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
                 <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(var(--ink-soft))] font-semibold block">
                   Log Utilities
@@ -2353,7 +2502,14 @@ function Canvas() {
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
-                    onClick={handleLogsExpandAll}
+                    onClick={() => {
+                      if (!displayedLogs) return;
+                      const patch: Record<string, boolean> = {};
+                      displayedLogs.forEach((l) => {
+                        if (l.stateSnapshot) patch[`${l.step}-${l.nodeId}`] = true;
+                      });
+                      setExpandedLogSnapshots(patch);
+                    }}
                     className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
                   >
                     Expand Snapshots
@@ -2369,7 +2525,18 @@ function Canvas() {
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
-                    onClick={handleExportLogs}
+                    onClick={() => {
+                      if (!displayedLogs || displayedLogs.length === 0) return;
+                      const data = JSON.stringify(displayedLogs, null, 2);
+                      const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "agent_flow_run_logs.json";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success("Logs downloaded");
+                    }}
                     className="font-mono text-[9px] uppercase tracking-wider py-1 border border-dashed border-[hsl(var(--ink-faint))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
                   >
                     Export Logs JSON
@@ -2385,12 +2552,21 @@ function Canvas() {
               </div>
             )}
 
-            {runLogs && runLogs.length === 0 && !running && (
+            {displayedLogs && displayedLogs.length === 0 && !running && (
               <div className="font-mono text-[10px] text-[hsl(var(--issue))] uppercase tracking-[0.15em]">
                 no logs — see toast for error
               </div>
             )}
-            {filteredLogs.map((l) => (
+            {(displayedLogs ? displayedLogs.filter((l) => {
+              const q = logsSearchQuery.trim().toLowerCase();
+              if (!q) return true;
+              return (
+                l.name.toLowerCase().includes(q) ||
+                l.kind.toLowerCase().includes(q) ||
+                (l.error && l.error.toLowerCase().includes(q)) ||
+                (l.output && (typeof l.output === "string" ? l.output.toLowerCase().includes(q) : JSON.stringify(l.output).toLowerCase().includes(q)))
+              );
+            }) : []).map((l) => (
               <LogItemRow
                 key={`${l.step}-${l.nodeId}-0`}
                 log={l}
@@ -2406,7 +2582,8 @@ function Canvas() {
             ))}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {showGateway && (
         <GatewayManager
@@ -2470,6 +2647,27 @@ function Canvas() {
           selectNode={(id) => {
             setSelectedId(id);
             setSelectedEdgeId(null);
+          }}
+        />
+      )}
+
+      {showComparison && (
+        <RunComparisonModal
+          history={runHistory}
+          onClose={() => setShowComparison(false)}
+        />
+      )}
+
+      {showWorkspaceManager && (
+        <WorkspaceManager
+          onClose={() => setShowWorkspaceManager(false)}
+          onWorkspaceRestored={() => {
+            setWorkflows(loadWorkflows());
+            setGateways(loadGateways());
+            setGlobals(loadGlobals());
+            setSecrets(loadSecrets());
+            handleSelectWorkflow(loadActiveWorkflowId());
+            toast.success("Workspace UI updated");
           }}
         />
       )}
