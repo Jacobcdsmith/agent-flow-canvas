@@ -66,6 +66,15 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import { WorkspaceManager } from "@/flow/WorkspaceManager";
+import {
+  RunRecord,
+  loadRunHistory,
+  saveRunRecord,
+  deleteRunRecord,
+  clearRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -198,6 +207,7 @@ function Canvas() {
   const [workflows, setWorkflows] = useState<Workflow[]>(() => loadWorkflows());
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // Initialize nodes and edges based on active workflow id
@@ -228,10 +238,19 @@ function Canvas() {
   const [validated, setValidated] = useState(false);
   const addOffsetRef = useRef(0);
 
-  // ---- Run state ----
+  // ---- Run state & Run History ----
   const [runLogs, setRunLogs] = useState<RunLog[] | null>(null);
   const [running, setRunning] = useState(false);
   const [showRun, setShowRun] = useState(false);
+  const [runHistory, setRunHistory] = useState<RunRecord[]>(() => loadRunHistory(loadActiveWorkflowId()));
+  const [selectedRunIdsForCompare, setSelectedRunIdsForCompare] = useState<string[]>([]);
+  const [compareModalPair, setCompareModalPair] = useState<[RunRecord, RunRecord] | null>(null);
+
+  useEffect(() => {
+    setRunHistory(loadRunHistory(activeWorkflowId));
+    setSelectedRunIdsForCompare([]);
+  }, [activeWorkflowId]);
+
   const [initialStateStr, setInitialStateStr] = useState(() => {
     return JSON.stringify({ query: "hello world" }, null, 2);
   });
@@ -439,15 +458,18 @@ function Canvas() {
     } catch {}
   }, []);
 
-  // ---- undo stack ----
+  // ---- Interactive Undo & Redo Stacks ----
   const undoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
-  const skipSnapshot = useRef(false);
+  const redoStack = useRef<{ nodes: Node<AgentNodeData>[]; edges: Edge[] }[]>([]);
+
   const snapshot = useCallback(() => {
     undoStack.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges)),
     });
-    if (undoStack.current.length > 20) undoStack.current.shift();
+    if (undoStack.current.length > 25) undoStack.current.shift();
+    // Clear redo stack upon new state mutation
+    redoStack.current = [];
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
@@ -456,11 +478,31 @@ function Canvas() {
       toast("Nothing to undo");
       return;
     }
-    skipSnapshot.current = true;
+    // Push current to redo stack before undoing
+    redoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     setNodes(prev.nodes);
     setEdges(prev.edges);
     toast("Undo");
-  }, []);
+  }, [nodes, edges]);
+
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) {
+      toast("Nothing to redo");
+      return;
+    }
+    // Push current state to undo stack before redoing
+    undoStack.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    toast("Redo");
+  }, [nodes, edges]);
 
   // augment nodes with issue info for rendering
   const issueByNode = useMemo(() => {
@@ -700,9 +742,15 @@ function Canvas() {
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedId) deleteNode(selectedId);
         else if (selectedEdgeId) deleteEdge(selectedEdgeId);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
+      } else if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z")
+      ) {
+        e.preventDefault();
+        redo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
         e.preventDefault();
         if (selectedId) duplicateNode(selectedId);
@@ -713,7 +761,7 @@ function Canvas() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo]);
+  }, [selectedId, selectedEdgeId, deleteNode, deleteEdge, undo, redo]);
 
   const selected = useMemo(
     () => nodes.find((n) => n.id === selectedId) ?? null,
@@ -729,10 +777,6 @@ function Canvas() {
     [nodes, edges, codeLang, globals, secrets],
   );
   const pseudocode = generated.code;
-  const codeLintIssues = useMemo(
-    () => (codeLang === "python" ? lintPython(generated.code) : []),
-    [codeLang, generated.code],
-  );
 
   // export / import
   const exportJSON = useCallback(() => {
@@ -1035,6 +1079,8 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      saveRunRecord(activeWorkflowId, nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1052,6 +1098,8 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      saveRunRecord(activeWorkflowId, nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1071,6 +1119,8 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      saveRunRecord(activeWorkflowId, nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1089,6 +1139,8 @@ function Canvas() {
       setRunning(false);
       setPendingApproval(null);
       setFeedbackText("");
+      saveRunRecord(activeWorkflowId, nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
       setTimeout(() => setHighlight(null), 1500);
       return;
     }
@@ -1111,7 +1163,7 @@ function Canvas() {
     });
 
     toast(`Paused at next node "${nextNode.data.name}"`);
-  }, [nodes, edges, gateways, globals, secrets, stepperSession]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, activeWorkflowId]);
 
   // Stop debugger and reset stepper
   const stopStepper = useCallback(() => {
@@ -1234,6 +1286,8 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        saveRunRecord(activeWorkflowId, curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1251,6 +1305,8 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        saveRunRecord(activeWorkflowId, curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1270,6 +1326,8 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        saveRunRecord(activeWorkflowId, curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1288,6 +1346,8 @@ function Canvas() {
         setRunning(false);
         setPendingApproval(null);
         setFeedbackText("");
+        saveRunRecord(activeWorkflowId, curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
         setTimeout(() => setHighlight(null), 1500);
         return;
       }
@@ -1296,7 +1356,7 @@ function Canvas() {
       curStep++;
       curPrevEdgeLabel = String(nextEdge.label ?? "next");
     }
-  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints, activeWorkflowId]);
 
   const runFlowAction = useCallback(async () => {
     // If stepMode is active, trigger stepper initialization instead of full auto run
@@ -1368,13 +1428,15 @@ function Canvas() {
         },
       });
       setRunLogs(logs);
+      saveRunRecord(activeWorkflowId, logs);
+      setRunHistory(loadRunHistory(activeWorkflowId));
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
-      setRunLogs([
+      const errLogs: RunLog[] = [
         {
           step: 0,
           nodeId: "_error",
@@ -1384,7 +1446,10 @@ function Canvas() {
           error: msg,
           ms: 0,
         },
-      ]);
+      ];
+      setRunLogs(errLogs);
+      saveRunRecord(activeWorkflowId, errLogs);
+      setRunHistory(loadRunHistory(activeWorkflowId));
     } finally {
       setRunning(false);
       setPendingApproval(null);
@@ -1393,7 +1458,7 @@ function Canvas() {
         setHighlight(null);
       }, 1500);
     }
-  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper, activeWorkflowId]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -1483,6 +1548,25 @@ function Canvas() {
           <span className="hidden md:inline font-mono text-[10px] text-[hsl(var(--ink-faint))]">
             {nodes.length} nodes · {edges.length} edges
           </span>
+
+          {/* Undo and Redo Toolbar Actions */}
+          <div className="flex border border-dashed border-[hsl(var(--ink))]">
+            <button
+              onClick={undo}
+              title="Undo action (Ctrl+Z)"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              ↶ undo
+            </button>
+            <button
+              onClick={redo}
+              title="Redo action (Ctrl+Y or Ctrl+Shift+Z)"
+              className="font-mono text-[10px] sm:text-[11px] px-2 py-1 border-l border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+            >
+              ↷ redo
+            </button>
+          </div>
+
           {/* Quick Search / Command Palette trigger */}
           <button
             onClick={() => setShowCommandPalette(true)}
@@ -1552,6 +1636,14 @@ function Canvas() {
           >
             <span className="hidden sm:inline">📁 workflows · {[...TEMPLATES, ...workflows].length}</span>
             <span className="sm:hidden">📁 {[...TEMPLATES, ...workflows].length}</span>
+          </button>
+          <button
+            onClick={() => setShowWorkspace(true)}
+            title="Open Workspace Manager to backup (export) or restore (import) full workspace bundles"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">💾 workspace</span>
+            <span className="sm:hidden">💾</span>
           </button>
           <button
             onClick={() => setShowGlobals(true)}
@@ -1701,7 +1793,7 @@ function Canvas() {
 
           {!isMobile && (
             <div className="absolute top-3 left-3 font-mono text-[10px] text-[hsl(var(--ink-faint))] uppercase tracking-[0.2em] pointer-events-none">
-              click edge → select · drag handles → connect · del / esc / ⌘z
+              click edge → select · drag handles → connect · del / esc / ⌘z / ⌘y
             </div>
           )}
 
@@ -2231,6 +2323,123 @@ function Canvas() {
               )}
             </div>
 
+            {/* Run History & Comparison Manager Drawer Block */}
+            {runHistory.length > 0 && (
+              <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)] font-mono">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-[0.15em] font-semibold text-[hsl(var(--ink-soft))]">
+                    Past Execution Runs ({runHistory.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm("Clear all run history records for this workflow?")) {
+                        clearRunHistory(activeWorkflowId);
+                        setRunHistory([]);
+                        setSelectedRunIdsForCompare([]);
+                        toast.success("Run history cleared");
+                      }
+                    }}
+                    className="text-[8.5px] uppercase tracking-wider text-[hsl(var(--issue))] hover:underline"
+                  >
+                    Clear All History
+                  </button>
+                </div>
+
+                {/* Compare Action Button */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-dotted border-[hsl(var(--grid-line))]">
+                  <span className="text-[9px] text-[hsl(var(--ink-faint))]">
+                    Select 2 runs to compare side-by-side ({selectedRunIdsForCompare.length}/2 selected)
+                  </span>
+                  <button
+                    type="button"
+                    disabled={selectedRunIdsForCompare.length !== 2}
+                    onClick={() => {
+                      const runA = runHistory.find((r) => r.id === selectedRunIdsForCompare[0]);
+                      const runB = runHistory.find((r) => r.id === selectedRunIdsForCompare[1]);
+                      if (runA && runB) {
+                        setCompareModalPair([runA, runB]);
+                      }
+                    }}
+                    className="text-[9px] uppercase tracking-wider px-2 py-1 bg-[hsl(var(--ink))] text-[hsl(var(--paper))] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all font-semibold"
+                  >
+                    Compare Runs
+                  </button>
+                </div>
+
+                <div className="max-h-32 overflow-y-auto space-y-1.5 border border-dashed border-[hsl(var(--grid-line))] p-1.5 bg-[hsl(var(--paper))]">
+                  {runHistory.map((run) => {
+                    const isSelected = selectedRunIdsForCompare.includes(run.id);
+                    const timeStr = new Date(run.timestamp).toLocaleTimeString();
+                    return (
+                      <div
+                        key={run.id}
+                        className={`flex items-center justify-between p-1.5 border border-dashed text-[9.5px] transition-all ${
+                          isSelected
+                            ? "border-[hsl(var(--edge-selected))] bg-[hsl(var(--edge-selected)/0.04)]"
+                            : "border-[hsl(var(--grid-line))] hover:bg-[hsl(var(--ink)/0.02)]"
+                        }`}
+                      >
+                        <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                if (selectedRunIdsForCompare.length >= 2) {
+                                  setSelectedRunIdsForCompare([selectedRunIdsForCompare[1], run.id]);
+                                } else {
+                                  setSelectedRunIdsForCompare([...selectedRunIdsForCompare, run.id]);
+                                }
+                              } else {
+                                setSelectedRunIdsForCompare(selectedRunIdsForCompare.filter((id) => id !== run.id));
+                              }
+                            }}
+                            className="accent-[hsl(var(--ink))]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRunLogs(run.logs);
+                              toast.success(`Loaded logs from run ${run.id.slice(0, 8)} (${run.stepCount} steps)`);
+                            }}
+                            className="text-left font-mono truncate hover:underline flex-1"
+                          >
+                            <span className="font-bold">{timeStr}</span> · {run.stepCount} steps ({run.durationMs}ms)
+                          </button>
+                        </label>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`font-bold px-1 py-0.2 border text-[8px] ${
+                              run.hasError
+                                ? "text-[hsl(var(--issue))] border-[hsl(var(--issue))]"
+                                : "text-emerald-700 dark:text-emerald-400 border-emerald-600"
+                            }`}
+                          >
+                            {run.hasError ? "FAIL" : "PASS"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              deleteRunRecord(activeWorkflowId, run.id);
+                              setRunHistory(loadRunHistory(activeWorkflowId));
+                              setSelectedRunIdsForCompare((prev) => prev.filter((id) => id !== run.id));
+                              toast("Run record deleted");
+                            }}
+                            className="text-[10px] text-[hsl(var(--ink-faint))] hover:text-[hsl(var(--issue))]"
+                            title="Delete run record"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {pendingApproval && (
               <div className="border-2 border-[hsl(var(--accent-deep))] p-3 space-y-2 bg-[hsl(var(--accent-deep)/0.03)] animate-pulse shadow-md mb-2">
                 <div className="flex items-center gap-2">
@@ -2439,6 +2648,33 @@ function Canvas() {
           onSelectWorkflow={handleSelectWorkflow}
           onWorkflowsChange={setWorkflows}
           onClose={() => setShowWorkflows(false)}
+        />
+      )}
+
+      {showWorkspace && (
+        <WorkspaceManager
+          onClose={() => setShowWorkspace(false)}
+          onWorkspaceImported={({ workflows: wfs, globals: g, secrets: s, gateways: gw }) => {
+            setWorkflows(wfs);
+            setGlobals(g);
+            setSecrets(s);
+            setGateways(gw);
+            if (activeWorkflowId) {
+              const found = [...TEMPLATES, ...wfs].find((w) => w.id === activeWorkflowId);
+              if (found) {
+                setNodes(found.nodes);
+                setEdges(found.edges);
+              }
+            }
+          }}
+        />
+      )}
+
+      {compareModalPair && (
+        <RunComparisonModal
+          runA={compareModalPair[0]}
+          runB={compareModalPair[1]}
+          onClose={() => setCompareModalPair(null)}
         />
       )}
 
