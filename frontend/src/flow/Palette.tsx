@@ -16,6 +16,7 @@ const KIND_COLOR: Record<string, string> = {
   sink: "hsl(var(--node-sink))",
   http: "hsl(var(--node-http))",
   script: "hsl(var(--node-script))",
+  transform: "hsl(180 70% 40%)",
   note: "hsl(45 90% 48%)",
 };
 

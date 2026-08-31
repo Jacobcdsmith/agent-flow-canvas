@@ -426,6 +426,24 @@ export function generatePython(
           `state.last = result`,
           `return "next"`,
         ].join("\n");
+      case "transform": {
+        const op = pyStr(c.operation || "json_map");
+        const expr = pyStr(c.expression || "");
+        const tgt = pyStr(c.target_key || "");
+        return [
+          `# Data Transform: op=${op}`,
+          `expr_val = interpolate(${expr}, state)`,
+          `try:`,
+          `    result = json.loads(expr_val) if ${op} in ("json_map", "set_keys") else expr_val`,
+          `except Exception:`,
+          `    result = expr_val`,
+          `if ${tgt}:`,
+          `    key = ${tgt}.replace("state.", "")`,
+          `    state.set(key, result)`,
+          `state.last = result`,
+          `return "next"`,
+        ].join("\n");
+      }
       case "note":
         return [
           `# Sticky Note Annotation:`,
@@ -620,6 +638,20 @@ export function generateJavaScript(
           `state.last = await runJsScript(${JSON.stringify(c.code || "")}, state);`,
           `return "next";`,
         ].join("\n");
+      case "transform": {
+        const op = JSON.stringify(c.operation || "json_map");
+        const expr = JSON.stringify(c.expression || "");
+        const tgt = JSON.stringify(c.target_key || "");
+        return [
+          `// Data Transform: op=${op}`,
+          `const exprVal = interpolate(${expr}, state);`,
+          `let result;`,
+          `try { result = JSON.parse(exprVal); } catch { result = exprVal; }`,
+          `if (${tgt}) { const key = ${tgt}.replace("state.", ""); state.set(key, result); }`,
+          `state.last = result;`,
+          `return "next";`,
+        ].join("\n");
+      }
       case "note":
         return [
           `// Sticky Note Annotation:`,

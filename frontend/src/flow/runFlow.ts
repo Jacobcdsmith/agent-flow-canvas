@@ -465,6 +465,75 @@ export async function runNode(
         throw new Error(`Script execution failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    case "transform": {
+      const op = (cfg.operation || "json_map").toLowerCase();
+      const rawExpr = cfg.expression || "";
+      const targetKey = (cfg.target_key || "").trim();
+      let transformedResult: unknown;
+
+      if (op === "template_string") {
+        transformedResult = interpolate(rawExpr, state, globalsList, secretsList);
+      } else if (op === "pick_fields") {
+        const fields = rawExpr
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const sourceObj =
+          typeof state.last_output === "object" && state.last_output !== null
+            ? (state.last_output as Record<string, unknown>)
+            : state;
+        const picked: Record<string, unknown> = {};
+        fields.forEach((f) => {
+          const val = getPath(sourceObj, f) ?? getPath(state, f);
+          if (val !== undefined) picked[f] = val;
+        });
+        transformedResult = picked;
+      } else if (op === "flatten_object") {
+        const sourceObj =
+          typeof state.last_output === "object" && state.last_output !== null
+            ? (state.last_output as Record<string, unknown>)
+            : state;
+        const flattened: Record<string, unknown> = {};
+        const flattenHelper = (obj: Record<string, unknown>, prefix = "") => {
+          Object.keys(obj).forEach((k) => {
+            const key = prefix ? `${prefix}.${k}` : k;
+            const val = obj[k];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              flattenHelper(val as Record<string, unknown>, key);
+            } else {
+              flattened[key] = val;
+            }
+          });
+        };
+        flattenHelper(sourceObj);
+        transformedResult = flattened;
+      } else if (op === "set_keys") {
+        const interpolatedExpr = interpolate(rawExpr, state, globalsList, secretsList);
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(interpolatedExpr);
+        } catch (e) {
+          throw new Error(`Invalid JSON mapping in set_keys transform: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        Object.assign(state, parsed);
+        transformedResult = parsed;
+      } else {
+        // json_map default
+        const interpolatedExpr = interpolate(rawExpr, state, globalsList, secretsList);
+        try {
+          transformedResult = JSON.parse(interpolatedExpr);
+        } catch (e) {
+          throw new Error(`Invalid JSON mapping in json_map transform: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      if (targetKey) {
+        const cleanKey = targetKey.replace(/^state\./, "");
+        state[cleanKey] = transformedResult;
+      }
+
+      return transformedResult;
+    }
     case "sink": {
       return {
         target: cfg.target || "response",
