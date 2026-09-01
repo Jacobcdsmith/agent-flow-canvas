@@ -66,6 +66,7 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import { WorkflowAnalyticsModal } from "@/flow/WorkflowAnalyticsModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -199,6 +200,7 @@ function Canvas() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   // Initialize nodes and edges based on active workflow id
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
@@ -1921,6 +1923,13 @@ function Canvas() {
             </div>
             <div className="flex gap-1.5">
               <button
+                onClick={() => setShowAnalytics(true)}
+                title="View execution analytics and performance bottlenecks"
+                className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))]"
+              >
+                📊 analytics
+              </button>
+              <button
                 onClick={runFlowAction}
                 disabled={running}
                 className="font-mono text-[10px] uppercase px-2 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] disabled:opacity-50"
@@ -2473,6 +2482,13 @@ function Canvas() {
           }}
         />
       )}
+
+      <WorkflowAnalyticsModal
+        isOpen={showAnalytics}
+        runLogs={runLogs}
+        nodes={nodes}
+        onClose={() => setShowAnalytics(false)}
+      />
     </div>
   );
 }

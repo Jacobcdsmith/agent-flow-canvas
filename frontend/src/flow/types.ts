@@ -9,7 +9,9 @@ export type AgentNodeKind =
   | "sink"
   | "http"
   | "script"
-  | "note";
+  | "note"
+  | "transform"
+  | "loop";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -149,6 +151,43 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     configFields: [
       { key: "content", label: "content", placeholder: "Write documentation note here...", type: "textarea" },
       { key: "color", label: "color", placeholder: "yellow", type: "select", options: ["yellow", "blue", "green", "pink", "purple"] },
+    ],
+  },
+  {
+    kind: "transform",
+    label: "Data Transform",
+    description: "Transforms, maps, picks fields, or formats data in state.",
+    defaultName: "transform_data",
+    configFields: [
+      {
+        key: "operation",
+        label: "operation",
+        placeholder: "json_map",
+        type: "select",
+        options: [
+          "json_map",
+          "pick_fields",
+          "template_string",
+          "set_keys",
+          "flatten_object",
+        ],
+      },
+      { key: "source_path", label: "source_path", placeholder: "state.data" },
+      { key: "target_key", label: "target_key", placeholder: "transformed_result" },
+      { key: "param", label: "param / template", placeholder: "e.g. name,email,id or Hello {{state.name}}", type: "textarea" },
+    ],
+  },
+  {
+    kind: "loop",
+    label: "Loop Iterator",
+    description: "Iterates over an array in state and maps or transforms items.",
+    defaultName: "loop_items",
+    configFields: [
+      { key: "items_path", label: "items_path", placeholder: "state.items" },
+      { key: "item_var", label: "item_var", placeholder: "item" },
+      { key: "output_key", label: "output_key", placeholder: "loop_results" },
+      { key: "transform_template", label: "transform_template", placeholder: "{{item.name}}: {{item.status}}", type: "textarea" },
+      { key: "max_iterations", label: "max_iterations", placeholder: "50" },
     ],
   },
 ];
