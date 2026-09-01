@@ -49,6 +49,26 @@ export function validateGraph(
         });
       }
     }
+    if (n.data.kind === "transform") {
+      const cfg = n.data.config ?? {};
+      if ("target_key" in cfg && !cfg.target_key?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "orphan",
+          message: `Transform "${n.data.name}" missing target_key`,
+        });
+      }
+    }
+    if (n.data.kind === "loop") {
+      const cfg = n.data.config ?? {};
+      if ("items_path" in cfg && !cfg.items_path?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "orphan",
+          message: `Loop "${n.data.name}" missing items_path`,
+        });
+      }
+    }
   }
   return issues;
 }

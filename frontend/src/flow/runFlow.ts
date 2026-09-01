@@ -97,6 +97,22 @@ function getPath(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
+ * Recursively flattens a nested object structure into a single-level object with dot-separated keys.
+ */
+function flattenObject(obj: Record<string, unknown>, prefix = ""): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const newKey = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0) {
+      Object.assign(result, flattenObject(value as Record<string, unknown>, newKey));
+    } else {
+      result[newKey] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Evaluates the output state of the current node to select the matching outgoing edge.
  * Prioritizes on_error edges if an error occurred, router conditions, tool_results,
  * and falls back sequentially to "next", "on_success", or the first outgoing edge.
@@ -477,6 +493,149 @@ export async function runNode(
         color: cfg.color || "yellow",
         annotationOnly: true,
       };
+    }
+    case "transform": {
+      const op = (cfg.operation || "json_map").toLowerCase();
+      const sourcePath = (cfg.source_path || "state").trim();
+      const targetKey = (cfg.target_key || "transformed_result").trim();
+      const param = cfg.param || "";
+
+      // Resolve source value
+      let sourceVal: unknown;
+      if (!sourcePath || sourcePath === "state") {
+        sourceVal = state;
+      } else {
+        const cleanPath = sourcePath.startsWith("state.") ? sourcePath.slice(6) : sourcePath;
+        sourceVal = getPath(state, cleanPath) ?? state.last_output;
+      }
+
+      let result: unknown;
+
+      if (op === "pick_fields") {
+        const fields = param.split(",").map((f) => f.trim()).filter(Boolean);
+        if (typeof sourceVal === "object" && sourceVal !== null && !Array.isArray(sourceVal)) {
+          const picked: Record<string, unknown> = {};
+          const sourceObj = sourceVal as Record<string, unknown>;
+          fields.forEach((f) => {
+            if (f in sourceObj) picked[f] = sourceObj[f];
+          });
+          result = picked;
+        } else {
+          result = sourceVal;
+        }
+      } else if (op === "template_string") {
+        result = interpolate(param, state, globalsList, secretsList);
+      } else if (op === "set_keys") {
+        let patch: Record<string, unknown> = {};
+        if (param.trim()) {
+          try {
+            const interpolatedParam = interpolate(param, state, globalsList, secretsList);
+            patch = JSON.parse(interpolatedParam);
+          } catch {
+            patch = { value: interpolate(param, state, globalsList, secretsList) };
+          }
+        }
+        if (typeof sourceVal === "object" && sourceVal !== null && !Array.isArray(sourceVal)) {
+          result = { ...(sourceVal as Record<string, unknown>), ...patch };
+        } else {
+          result = { ...patch };
+        }
+      } else if (op === "flatten_object") {
+        if (typeof sourceVal === "object" && sourceVal !== null && !Array.isArray(sourceVal)) {
+          result = flattenObject(sourceVal as Record<string, unknown>);
+        } else {
+          result = sourceVal;
+        }
+      } else {
+        // Default json_map
+        if (param.trim()) {
+          try {
+            const interpolatedParam = interpolate(param, state, globalsList, secretsList);
+            const mapping = JSON.parse(interpolatedParam);
+            if (typeof mapping === "object" && mapping !== null && !Array.isArray(mapping)) {
+              const mappedObj: Record<string, unknown> = {};
+              const sourceObj = (typeof sourceVal === "object" && sourceVal !== null ? sourceVal : state) as Record<string, unknown>;
+              Object.entries(mapping as Record<string, string>).forEach(([newKey, origPath]) => {
+                const cleanOrigPath = String(origPath).startsWith("state.") ? String(origPath).slice(6) : String(origPath);
+                mappedObj[newKey] = getPath(sourceObj, cleanOrigPath) ?? getPath(state, cleanOrigPath) ?? origPath;
+              });
+              result = mappedObj;
+            } else {
+              result = mapping;
+            }
+          } catch {
+            result = interpolate(param, state, globalsList, secretsList);
+          }
+        } else {
+          result = sourceVal;
+        }
+      }
+
+      state[targetKey] = result;
+      return result;
+    }
+    case "loop": {
+      const itemsPath = (cfg.items_path || "state.items").trim();
+      const itemVar = (cfg.item_var || "item").trim();
+      const outputKey = (cfg.output_key || "loop_results").trim();
+      const template = cfg.transform_template || "";
+      const maxIter = parseIntOr(cfg.max_iterations, 50);
+
+      const cleanPath = itemsPath.startsWith("state.") ? itemsPath.slice(6) : itemsPath;
+      const rawItems = getPath(state, cleanPath) ?? (cleanPath in state ? state[cleanPath] : undefined);
+
+      let itemsArray: unknown[] = [];
+      if (Array.isArray(rawItems)) {
+        itemsArray = rawItems;
+      } else if (rawItems !== undefined && rawItems !== null) {
+        itemsArray = [rawItems];
+      }
+
+      const truncatedItems = itemsArray.slice(0, maxIter);
+      const mappedResults: unknown[] = [];
+
+      for (const item of truncatedItems) {
+        const itemScope: Record<string, unknown> = { ...state, [itemVar]: item };
+        if (!template.trim()) {
+          mappedResults.push(item);
+        } else if (template.includes("{{")) {
+          let interpolated = template;
+          if (globalsList) {
+            globalsList.forEach((g) => {
+              interpolated = interpolated.replace(new RegExp(`\\{\\{\\s*global\\.${g.key}\\s*\\}\\}`, "g"), g.value);
+            });
+          }
+          if (secretsList) {
+            secretsList.forEach((s) => {
+              interpolated = interpolated.replace(new RegExp(`\\{\\{\\s*secret\\.${s.key}\\s*\\}\\}`, "g"), s.value);
+            });
+          }
+          interpolated = interpolated.replace(new RegExp(`\\{\\{\\s*${itemVar}\\.([\\w.]+)\\s*\\}\\}`, "g"), (_m, prop) => {
+            if (typeof item === "object" && item !== null) {
+              const val = getPath(item as Record<string, unknown>, String(prop));
+              return val === undefined ? "" : typeof val === "string" ? val : JSON.stringify(val);
+            }
+            return "";
+          });
+          interpolated = interpolated.replace(new RegExp(`\\{\\{\\s*${itemVar}\\s*\\}\\}`, "g"), () => {
+            return typeof item === "string" ? item : JSON.stringify(item);
+          });
+          interpolated = interpolate(interpolated, state, globalsList, secretsList);
+          mappedResults.push(interpolated);
+        } else if (template.startsWith(`${itemVar}.`)) {
+          const propPath = template.slice(itemVar.length + 1);
+          if (typeof item === "object" && item !== null) {
+            mappedResults.push(getPath(item as Record<string, unknown>, propPath) ?? null);
+          } else {
+            mappedResults.push(null);
+          }
+        } else {
+          mappedResults.push(template);
+        }
+      }
+
+      state[outputKey] = mappedResults;
+      return { count: mappedResults.length, items: mappedResults };
     }
     default:
       return { kind: node.data.kind, note: "no executor" };

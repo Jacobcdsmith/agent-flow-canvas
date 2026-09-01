@@ -432,6 +432,38 @@ export function generatePython(
           `# ${c.content ? c.content.replace(/\n/g, "\n# ") : "(empty note)"}`,
           `return "next"`,
         ].join("\n");
+      case "transform": {
+        const op = (c.operation || "json_map").toLowerCase();
+        const src = pyStr(c.source_path || "state");
+        const tgt = pyStr(c.target_key || "transformed_result");
+        const param = pyStr(c.param || "");
+        return [
+          `# Data Transform op=${op}`,
+          `source_val = state.get(${src}, state.last)`,
+          `param_val = interpolate(${param}, state)`,
+          `result = {"op": ${pyStr(op)}, "source": source_val, "param": param_val}`,
+          `state.set(${tgt}, result)`,
+          `state.last = result`,
+          `return "next"`,
+        ].join("\n");
+      }
+      case "loop": {
+        const itemsPath = pyStr(c.items_path || "state.items");
+        const outputKey = pyStr(c.output_key || "loop_results");
+        const tmpl = pyStr(c.transform_template || "");
+        const maxIter = parseInt(c.max_iterations || "50", 10) || 50;
+        return [
+          `# Loop Iterator items=${itemsPath}`,
+          `raw_items = state.get(${itemsPath}, [])`,
+          `items_list = raw_items if isinstance(raw_items, list) else [raw_items] if raw_items else []`,
+          `mapped_results = []`,
+          `for idx, item in enumerate(items_list[:${maxIter}]):`,
+          `    mapped_results.append(interpolate(${tmpl}, state) if ${tmpl} else item)`,
+          `state.set(${outputKey}, mapped_results)`,
+          `state.last = mapped_results`,
+          `return "next"`,
+        ].join("\n");
+      }
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -626,6 +658,34 @@ export function generateJavaScript(
           `// ${c.content ? c.content.replace(/\n/g, "\n// ") : "(empty note)"}`,
           `return "next";`,
         ].join("\n");
+      case "transform": {
+        const op = (c.operation || "json_map").toLowerCase();
+        const src = JSON.stringify(c.source_path || "state");
+        const tgt = JSON.stringify(c.target_key || "transformed_result");
+        const param = JSON.stringify(c.param || "");
+        return [
+          `const sourceVal = state.get(${src}) ?? state.last;`,
+          `const paramVal = interpolate(${param}, state);`,
+          `const result = { op: "${op}", source: sourceVal, param: paramVal };`,
+          `state.set(${tgt}, result);`,
+          `state.last = result;`,
+          `return "next";`,
+        ].join("\n");
+      }
+      case "loop": {
+        const itemsPath = JSON.stringify(c.items_path || "state.items");
+        const outputKey = JSON.stringify(c.output_key || "loop_results");
+        const tmpl = JSON.stringify(c.transform_template || "");
+        const maxIter = parseInt(c.max_iterations || "50", 10) || 50;
+        return [
+          `const rawItems = state.get(${itemsPath}) ?? [];`,
+          `const itemsList = Array.isArray(rawItems) ? rawItems : [rawItems];`,
+          `const mapped = itemsList.slice(0, ${maxIter}).map(item => interpolate(${tmpl}, state) || item);`,
+          `state.set(${outputKey}, mapped);`,
+          `state.last = mapped;`,
+          `return "next";`,
+        ].join("\n");
+      }
       default:
         return `return "next";`;
     }
@@ -677,4 +737,4 @@ export function generateCode(
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note","transform","loop"];
