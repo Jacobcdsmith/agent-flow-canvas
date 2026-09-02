@@ -66,6 +66,15 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import {
+  RunRecord,
+  loadRunHistory,
+  recordRun,
+  clearRunHistory,
+} from "@/flow/runHistory";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
+import { WorkflowAnalyticsModal } from "@/flow/WorkflowAnalyticsModal";
+import { WorkspaceManager } from "@/flow/WorkspaceManager";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -199,6 +208,27 @@ function Canvas() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  // ---- Modals State: Analytics, Comparison, Workspace ----
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(false);
+
+  // ---- Execution Run History State ----
+  const [runHistory, setRunHistory] = useState<RunRecord[]>(() => loadRunHistory(loadActiveWorkflowId()));
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+
+  useEffect(() => {
+    const history = loadRunHistory(activeWorkflowId);
+    setRunHistory(history);
+    setSelectedRunId("");
+  }, [activeWorkflowId]);
+
+  // Active workflow metadata helper
+  const activeWorkflowObj = useMemo(() => {
+    if (!activeWorkflowId) return null;
+    return [...TEMPLATES, ...workflows].find((w) => w.id === activeWorkflowId) || null;
+  }, [activeWorkflowId, workflows]);
 
   // Initialize nodes and edges based on active workflow id
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
@@ -381,6 +411,29 @@ function Canvas() {
       setSelectedEdgeId(null);
     }
   }, [workflows]);
+
+  // Reload entire workspace after restore
+  const handleWorkspaceRestored = useCallback(() => {
+    const wfs = loadWorkflows();
+    setWorkflows(wfs);
+    const activeId = loadActiveWorkflowId();
+    setActiveWorkflowId(activeId);
+    setGlobals(loadGlobals());
+    setSecrets(loadSecrets());
+    setGateways(loadGateways());
+
+    if (activeId) {
+      const found = [...TEMPLATES, ...wfs].find((w) => w.id === activeId);
+      if (found) {
+        setNodes(found.nodes);
+        setEdges(found.edges);
+      }
+    } else {
+      setNodes(exampleNodes);
+      setEdges(exampleEdges);
+    }
+    toast.success("Workspace state restored successfully");
+  }, []);
 
   // Autosave current canvas nodes/edges changes back into the active customized workflow (non-template)
   useEffect(() => {
@@ -1036,6 +1089,11 @@ function Canvas() {
       setPendingApproval(null);
       setFeedbackText("");
       setTimeout(() => setHighlight(null), 1500);
+
+      // Record run in history
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
+      setSelectedRunId(record.id);
       return;
     }
 
@@ -1053,6 +1111,11 @@ function Canvas() {
       setPendingApproval(null);
       setFeedbackText("");
       setTimeout(() => setHighlight(null), 1500);
+
+      // Record run in history
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
+      setSelectedRunId(record.id);
       return;
     }
 
@@ -1072,6 +1135,11 @@ function Canvas() {
       setPendingApproval(null);
       setFeedbackText("");
       setTimeout(() => setHighlight(null), 1500);
+
+      // Record run in history
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
+      setSelectedRunId(record.id);
       return;
     }
 
@@ -1090,6 +1158,11 @@ function Canvas() {
       setPendingApproval(null);
       setFeedbackText("");
       setTimeout(() => setHighlight(null), 1500);
+
+      // Record run in history
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", nextHistory);
+      setRunHistory(loadRunHistory(activeWorkflowId));
+      setSelectedRunId(record.id);
       return;
     }
 
@@ -1111,7 +1184,7 @@ function Canvas() {
     });
 
     toast(`Paused at next node "${nextNode.data.name}"`);
-  }, [nodes, edges, gateways, globals, secrets, stepperSession]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, activeWorkflowId, activeWorkflowObj]);
 
   // Stop debugger and reset stepper
   const stopStepper = useCallback(() => {
@@ -1235,6 +1308,11 @@ function Canvas() {
         setPendingApproval(null);
         setFeedbackText("");
         setTimeout(() => setHighlight(null), 1500);
+
+        // Record run
+        const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
+        setSelectedRunId(record.id);
         return;
       }
 
@@ -1252,6 +1330,11 @@ function Canvas() {
         setPendingApproval(null);
         setFeedbackText("");
         setTimeout(() => setHighlight(null), 1500);
+
+        // Record run
+        const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
+        setSelectedRunId(record.id);
         return;
       }
 
@@ -1271,6 +1354,11 @@ function Canvas() {
         setPendingApproval(null);
         setFeedbackText("");
         setTimeout(() => setHighlight(null), 1500);
+
+        // Record run
+        const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
+        setSelectedRunId(record.id);
         return;
       }
 
@@ -1289,6 +1377,11 @@ function Canvas() {
         setPendingApproval(null);
         setFeedbackText("");
         setTimeout(() => setHighlight(null), 1500);
+
+        // Record run
+        const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", curHistory);
+        setRunHistory(loadRunHistory(activeWorkflowId));
+        setSelectedRunId(record.id);
         return;
       }
 
@@ -1296,7 +1389,7 @@ function Canvas() {
       curStep++;
       curPrevEdgeLabel = String(nextEdge.label ?? "next");
     }
-  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints]);
+  }, [nodes, edges, gateways, globals, secrets, stepperSession, breakpoints, activeWorkflowId, activeWorkflowObj]);
 
   const runFlowAction = useCallback(async () => {
     // If stepMode is active, trigger stepper initialization instead of full auto run
@@ -1335,6 +1428,7 @@ function Canvas() {
     setRunning(true);
     setShowRun(true);
     setRunLogs([]);
+    setSelectedRunId("");
     const stepDelay = visualSpeed === "visualized" ? 600 : 0;
     try {
       const logs = await runFlow({
@@ -1371,10 +1465,16 @@ function Canvas() {
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
+
+      // Record run history
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", logs);
+      const updatedHistory = loadRunHistory(activeWorkflowId);
+      setRunHistory(updatedHistory);
+      setSelectedRunId(record.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Run failed: ${msg}`);
-      setRunLogs([
+      const errLogs: RunLog[] = [
         {
           step: 0,
           nodeId: "_error",
@@ -1384,7 +1484,11 @@ function Canvas() {
           error: msg,
           ms: 0,
         },
-      ]);
+      ];
+      setRunLogs(errLogs);
+      const record = recordRun(activeWorkflowId, activeWorkflowObj?.name || "Workflow", errLogs);
+      setRunHistory(loadRunHistory(activeWorkflowId));
+      setSelectedRunId(record.id);
     } finally {
       setRunning(false);
       setPendingApproval(null);
@@ -1393,7 +1497,7 @@ function Canvas() {
         setHighlight(null);
       }, 1500);
     }
-  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper]);
+  }, [nodes, edges, gateways, gatewayInvalid, gatewayIssues, visualSpeed, initialStateStr, pendingApproval, stepMode, initStepper, activeWorkflowId, activeWorkflowObj]);
 
   const loadSampleGraph = useCallback((ns: Node<AgentNodeData>[], es: Edge[]) => {
     snapshot();
@@ -1561,6 +1665,34 @@ function Canvas() {
             <span className="hidden sm:inline">⚙ globals · {globals.length + secrets.length}</span>
             <span className="sm:hidden">⚙g · {globals.length + secrets.length}</span>
           </button>
+
+          {/* Analytics Modal Button */}
+          <button
+            onClick={() => setShowAnalytics(true)}
+            title="Open Workflow Performance Profiler & Analytics"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            📊 <span className="hidden sm:inline">analytics</span>
+          </button>
+
+          {/* Compare Runs Button */}
+          <button
+            onClick={() => setShowComparison(true)}
+            title="Open Side-by-Side Run Comparison & State Diff Modal"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ⚖️ <span className="hidden sm:inline">compare</span>
+          </button>
+
+          {/* Workspace Manager Button */}
+          <button
+            onClick={() => setShowWorkspace(true)}
+            title="Export or Import complete workspace bundle files"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            💾 <span className="hidden sm:inline">workspace</span>
+          </button>
+
           <button
             onClick={() => setShowSample(true)}
             title="Load the sample ReAct workflow and walk through tool, memory, and fallback nodes"
@@ -1943,6 +2075,54 @@ function Canvas() {
               </button>
             </div>
           </div>
+
+          {/* Past Execution Runs History Dropdown Bar */}
+          {runHistory.length > 0 && (
+            <div className="px-3 py-2 border-b border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--ink)/0.015)] flex items-center gap-2">
+              <span className="font-mono text-[9px] uppercase font-bold text-[hsl(var(--ink-soft))] shrink-0">
+                Run History:
+              </span>
+              <select
+                value={selectedRunId}
+                onChange={(e) => {
+                  const rid = e.target.value;
+                  setSelectedRunId(rid);
+                  if (rid) {
+                    const match = runHistory.find((r) => r.id === rid);
+                    if (match) {
+                      setRunLogs(match.logs);
+                      toast.info(`Viewing execution run from ${new Date(match.timestamp).toLocaleTimeString()}`);
+                    }
+                  }
+                }}
+                disabled={running}
+                className="flex-1 bg-[hsl(var(--paper))] border border-dashed border-[hsl(var(--ink-faint))] outline-none py-0.5 px-1.5 font-mono text-[10px] text-[hsl(var(--ink))]"
+              >
+                <option value="">-- Active / Latest Execution --</option>
+                {runHistory.map((r, idx) => (
+                  <option key={r.id} value={r.id}>
+                    Run #{runHistory.length - idx} · {new Date(r.timestamp).toLocaleTimeString()} · {r.totalMs}ms ({r.status.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={running}
+                onClick={() => {
+                  if (confirm("Clear run history for this workflow?")) {
+                    clearRunHistory(activeWorkflowId);
+                    setRunHistory([]);
+                    setSelectedRunId("");
+                    toast.success("Run history cleared");
+                  }
+                }}
+                className="font-mono text-[8px] uppercase tracking-wider px-1.5 py-0.5 border border-dashed border-[hsl(var(--issue))] text-[hsl(var(--issue))] hover:bg-[hsl(var(--issue))] hover:text-[hsl(var(--paper))]"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           <div className="flex-1 overflow-auto p-3 space-y-2">
             {/* Initial State Editor */}
             <div className="border border-dashed border-[hsl(var(--grid-line))] p-3 space-y-2 mb-2 bg-[hsl(var(--ink)/0.01)]">
@@ -2439,6 +2619,27 @@ function Canvas() {
           onSelectWorkflow={handleSelectWorkflow}
           onWorkflowsChange={setWorkflows}
           onClose={() => setShowWorkflows(false)}
+        />
+      )}
+
+      {showAnalytics && (
+        <WorkflowAnalyticsModal
+          logs={runLogs || []}
+          onClose={() => setShowAnalytics(false)}
+        />
+      )}
+
+      {showComparison && (
+        <RunComparisonModal
+          runs={runHistory}
+          onClose={() => setShowComparison(false)}
+        />
+      )}
+
+      {showWorkspace && (
+        <WorkspaceManager
+          onClose={() => setShowWorkspace(false)}
+          onWorkspaceRestored={handleWorkspaceRestored}
         />
       )}
 
