@@ -64,6 +64,21 @@ export function Inspector({
         />
       </label>
 
+      {node.data.kind === "transform" && (
+        <div className="p-2 border border-dashed border-[hsl(var(--grid-line))] bg-[hsl(var(--ink)/0.015)] space-y-1">
+          <span className="text-[9px] uppercase tracking-wider text-[hsl(var(--ink-faint))] font-semibold block">
+            Operation Preset Guide
+          </span>
+          <p className="text-[10px] text-[hsl(var(--ink-soft))] leading-snug">
+            {node.data.config?.operation === "pick_fields" && "Pick Fields: extracts listed properties (e.g. 'id, title, status') from input object."}
+            {node.data.config?.operation === "template_string" && "Template String: interpolates '{{state.val}}', '{{global.KEY}}', and '{{secret.KEY}}'."}
+            {node.data.config?.operation === "set_keys" && "Set Keys: assigns JSON key-value pairs directly onto execution state."}
+            {node.data.config?.operation === "flatten_object" && "Flatten Object: flattens nested JSON objects into top-level dot-notation keys."}
+            {(!node.data.config?.operation || node.data.config?.operation === "json_map") && "JSON Map: renames input object keys based on JSON mapping params."}
+          </p>
+        </div>
+      )}
+
       {meta.configFields.map((f) => (
         <label key={f.key} className="block">
           <span className="text-[10px] text-[hsl(var(--ink-faint))]">{f.label}</span>
