@@ -426,6 +426,47 @@ export function generatePython(
           `state.last = result`,
           `return "next"`,
         ].join("\n");
+      case "transform":
+        return [
+          `op = ${pyStr(c.operation || "json_map")}`,
+          `input_path = ${pyStr(c.input_path || "state.last_output")}`,
+          `output_key = ${pyStr(c.output_key || "transformed_data")}`,
+          `raw_params = ${pyStr(c.params || "")}`,
+          `input_val = state.get(input_path.replace("state.", ""), state.last)`,
+          `# transform operation: ${c.operation || "json_map"}`,
+          `if op == "template_string":`,
+          `    res = interpolate(raw_params or str(input_val or ""), state)`,
+          `elif op == "pick_fields":`,
+          `    fields = [f.strip() for f in raw_params.split(",") if f.strip()]`,
+          `    res = {k: v for k, v in input_val.items() if k in fields} if isinstance(input_val, dict) else input_val`,
+          `elif op == "set_keys":`,
+          `    keys = json.loads(interpolate(raw_params, state)) if raw_params.strip() else {}`,
+          `    for k, v in keys.items(): state.set(k, v)`,
+          `    res = keys`,
+          `else:`,
+          `    res = input_val`,
+          `state.set(output_key, res)`,
+          `state.last = res`,
+          `return "next"`,
+        ].join("\n");
+      case "loop":
+        return [
+          `arr_path = ${pyStr(c.array_path || "state.items")}`,
+          `item_var = ${pyStr(c.item_var || "item")}`,
+          `tmpl = ${pyStr(c.transform_template || "")}`,
+          `max_iter = ${parseInt(c.max_iterations || "100", 10)}`,
+          `out_key = ${pyStr(c.output_key || "loop_results")}`,
+          `arr = state.get(arr_path.replace("state.", ""), [])`,
+          `arr = arr if isinstance(arr, list) else [arr] if arr is not None else []`,
+          `results = []`,
+          `for item in arr[:max_iter]:`,
+          `    state.set(item_var, item)`,
+          `    mapped = interpolate(tmpl, state) if tmpl else item`,
+          `    results.append(mapped)`,
+          `state.set(out_key, results)`,
+          `state.last = results`,
+          `return "next"`,
+        ].join("\n");
       case "note":
         return [
           `# Sticky Note Annotation:`,
@@ -620,6 +661,45 @@ export function generateJavaScript(
           `state.last = await runJsScript(${JSON.stringify(c.code || "")}, state);`,
           `return "next";`,
         ].join("\n");
+      case "transform":
+        return [
+          `const op = ${JSON.stringify(c.operation || "json_map")};`,
+          `const inputPath = ${JSON.stringify(c.input_path || "state.last_output")};`,
+          `const outputKey = ${JSON.stringify(c.output_key || "transformed_data")};`,
+          `const rawParams = ${JSON.stringify(c.params || "")};`,
+          `const inputVal = state.get(inputPath.replace("state.", "")) ?? state.last;`,
+          `let res = inputVal;`,
+          `if (op === "template_string") res = interpolate(rawParams || String(inputVal ?? ""), state);`,
+          `else if (op === "pick_fields") {`,
+          `  const fields = rawParams.split(",").map(s => s.trim());`,
+          `  if (inputVal && typeof inputVal === "object") { res = {}; fields.forEach(f => { if (f in inputVal) res[f] = inputVal[f]; }); }`,
+          `} else if (op === "set_keys") {`,
+          `  const keys = JSON.parse(interpolate(rawParams, state) || "{}");`,
+          `  Object.entries(keys).forEach(([k, v]) => state.set(k, v));`,
+          `  res = keys;`,
+          `}`,
+          `state.set(outputKey, res);`,
+          `state.last = res;`,
+          `return "next";`,
+        ].join("\n");
+      case "loop":
+        return [
+          `const arrPath = ${JSON.stringify(c.array_path || "state.items")};`,
+          `const itemVar = ${JSON.stringify(c.item_var || "item")};`,
+          `const tmpl = ${JSON.stringify(c.transform_template || "")};`,
+          `const maxIter = ${parseInt(c.max_iterations || "100", 10)};`,
+          `const outKey = ${JSON.stringify(c.output_key || "loop_results")};`,
+          `const rawArr = state.get(arrPath.replace("state.", "")) ?? [];`,
+          `const arr = Array.isArray(rawArr) ? rawArr : (rawArr != null ? [rawArr] : []);`,
+          `const results = [];`,
+          `for (let i = 0; i < Math.min(arr.length, maxIter); i++) {`,
+          `  state.set(itemVar, arr[i]);`,
+          `  results.push(tmpl ? interpolate(tmpl, state) : arr[i]);`,
+          `}`,
+          `state.set(outKey, results);`,
+          `state.last = results;`,
+          `return "next";`,
+        ].join("\n");
       case "note":
         return [
           `// Sticky Note Annotation:`,
@@ -677,4 +757,4 @@ export function generateCode(
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","transform","loop","note"];

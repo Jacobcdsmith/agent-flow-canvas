@@ -49,6 +49,24 @@ export function validateGraph(
         });
       }
     }
+    if (n.data.kind === "transform") {
+      if (!n.data.config?.output_key?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "orphan",
+          message: `Transform "${n.data.name}" requires an output_key`,
+        });
+      }
+    }
+    if (n.data.kind === "loop") {
+      if (!n.data.config?.array_path?.trim() || !n.data.config?.output_key?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "orphan",
+          message: `Loop "${n.data.name}" requires array_path and output_key`,
+        });
+      }
+    }
   }
   return issues;
 }

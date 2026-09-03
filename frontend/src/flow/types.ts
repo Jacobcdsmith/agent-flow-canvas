@@ -9,6 +9,8 @@ export type AgentNodeKind =
   | "sink"
   | "http"
   | "script"
+  | "transform"
+  | "loop"
   | "note";
 
 export interface AgentNodeData {
@@ -139,6 +141,31 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     defaultName: "js_script",
     configFields: [
       { key: "code", label: "code", placeholder: "state.query = state.query.toUpperCase();\nreturn state;", type: "textarea" },
+    ],
+  },
+  {
+    kind: "transform",
+    label: "Data Transform",
+    description: "Performs zero-code state mappings, field picking, template interpolation, or key setting.",
+    defaultName: "transform_data",
+    configFields: [
+      { key: "operation", label: "operation", placeholder: "json_map", type: "select", options: ["json_map", "pick_fields", "template_string", "set_keys", "flatten_object"] },
+      { key: "input_path", label: "input_path", placeholder: "state.last_output  (or state property path)" },
+      { key: "output_key", label: "output_key", placeholder: "transformed_data  (key to save in state)" },
+      { key: "params", label: "params", placeholder: '{"key": "value"} or ["field1", "field2"] or template string', type: "textarea" },
+    ],
+  },
+  {
+    kind: "loop",
+    label: "Array Loop Iterator",
+    description: "Iterates over an array in state, mapping items and storing outputs in state.",
+    defaultName: "loop_items",
+    configFields: [
+      { key: "array_path", label: "array_path", placeholder: "state.items  (array path in state)" },
+      { key: "item_var", label: "item_var", placeholder: "item  (context variable name, default 'item')" },
+      { key: "transform_template", label: "transform_template", placeholder: "{{item.name}} - {{item.status}} or item.id", type: "textarea" },
+      { key: "max_iterations", label: "max_iterations", placeholder: "100  (safety iteration limit)" },
+      { key: "output_key", label: "output_key", placeholder: "loop_results  (key to save mapped array in state)" },
     ],
   },
   {

@@ -77,7 +77,16 @@ export function interpolate(
       const v = getPath(state, String(k));
       return v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v);
     })
-    .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""));
+    .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""))
+    .replace(/\{\{?\s*([\w.]+)\s*\}?\}/g, (_m, k) => {
+      const keyStr = String(k);
+      const rootKey = keyStr.split(".")[0];
+      if (rootKey in state) {
+        const v = getPath(state, keyStr);
+        return v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v);
+      }
+      return _m;
+    });
 }
 
 /**
@@ -464,6 +473,157 @@ export async function runNode(
       } catch (e) {
         throw new Error(`Script execution failed: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+    case "transform": {
+      const op = cfg.operation || "json_map";
+      const inputPath = cfg.input_path || "state.last_output";
+      const outputKey = cfg.output_key || "transformed_data";
+      const rawParams = cfg.params || "";
+
+      let inputVal: unknown;
+      if (inputPath.startsWith("state.")) {
+        inputVal = getPath(state, inputPath.slice(6));
+      } else {
+        inputVal = getPath(state, inputPath) ?? state.last_output ?? inputPath;
+      }
+
+      let transformed: unknown;
+
+      if (op === "json_map") {
+        let parsedInput = inputVal;
+        if (typeof inputVal === "string") {
+          try {
+            parsedInput = JSON.parse(inputVal);
+          } catch {
+            parsedInput = inputVal;
+          }
+        }
+        let mapping: Record<string, string> = {};
+        if (rawParams.trim()) {
+          try {
+            mapping = JSON.parse(interpolate(rawParams, state, globalsList, secretsList));
+          } catch {
+            mapping = {};
+          }
+        }
+        if (parsedInput && typeof parsedInput === "object" && !Array.isArray(parsedInput)) {
+          const mappedObj: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(parsedInput as Record<string, unknown>)) {
+            const targetKey = mapping[k] ?? k;
+            mappedObj[targetKey] = v;
+          }
+          transformed = mappedObj;
+        } else {
+          transformed = parsedInput;
+        }
+      } else if (op === "pick_fields") {
+        let fieldsToPick: string[] = [];
+        if (rawParams.trim()) {
+          try {
+            const parsed = JSON.parse(rawParams);
+            fieldsToPick = Array.isArray(parsed) ? parsed : String(parsed).split(",").map((s) => s.trim());
+          } catch {
+            fieldsToPick = rawParams.split(",").map((s) => s.trim());
+          }
+        }
+        if (inputVal && typeof inputVal === "object" && !Array.isArray(inputVal)) {
+          const pickedObj: Record<string, unknown> = {};
+          for (const f of fieldsToPick) {
+            if (f in (inputVal as Record<string, unknown>)) {
+              pickedObj[f] = (inputVal as Record<string, unknown>)[f];
+            }
+          }
+          transformed = pickedObj;
+        } else {
+          transformed = inputVal;
+        }
+      } else if (op === "template_string") {
+        const template = rawParams || String(inputVal ?? "");
+        transformed = interpolate(template, state, globalsList, secretsList);
+      } else if (op === "set_keys") {
+        let keysToSet: Record<string, unknown> = {};
+        if (rawParams.trim()) {
+          try {
+            const interpolatedParams = interpolate(rawParams, state, globalsList, secretsList);
+            keysToSet = JSON.parse(interpolatedParams);
+          } catch {
+            keysToSet = {};
+          }
+        }
+        for (const [k, v] of Object.entries(keysToSet)) {
+          state[k] = v;
+        }
+        transformed = keysToSet;
+      } else if (op === "flatten_object") {
+        const flatten = (obj: Record<string, unknown>, prefix = ""): Record<string, unknown> => {
+          return Object.keys(obj).reduce((acc: Record<string, unknown>, k: string) => {
+            const pre = prefix.length ? prefix + "." : "";
+            if (obj[k] && typeof obj[k] === "object" && !Array.isArray(obj[k])) {
+              Object.assign(acc, flatten(obj[k] as Record<string, unknown>, pre + k));
+            } else {
+              acc[pre + k] = obj[k];
+            }
+            return acc;
+          }, {});
+        };
+        if (inputVal && typeof inputVal === "object" && !Array.isArray(inputVal)) {
+          transformed = flatten(inputVal as Record<string, unknown>);
+        } else {
+          transformed = inputVal;
+        }
+      } else {
+        transformed = inputVal;
+      }
+
+      state[outputKey] = transformed;
+      return { operation: op, output_key: outputKey, result: transformed };
+    }
+    case "loop": {
+      const arrayPath = cfg.array_path || "state.items";
+      const itemVar = cfg.item_var || "item";
+      const transformTemplate = cfg.transform_template || "";
+      const maxIterations = parseIntOr(cfg.max_iterations, 100);
+      const outputKey = cfg.output_key || "loop_results";
+
+      let rawArray: unknown;
+      if (arrayPath.startsWith("state.")) {
+        rawArray = getPath(state, arrayPath.slice(6));
+      } else {
+        rawArray = getPath(state, arrayPath) ?? state.last_output;
+      }
+
+      let arrayToIterate: unknown[] = [];
+      if (Array.isArray(rawArray)) {
+        arrayToIterate = rawArray;
+      } else if (rawArray !== undefined && rawArray !== null) {
+        arrayToIterate = [rawArray];
+      }
+
+      const results: unknown[] = [];
+      const iterateCount = Math.min(arrayToIterate.length, maxIterations);
+
+      for (let i = 0; i < iterateCount; i++) {
+        const currentItem = arrayToIterate[i];
+        state[itemVar] = currentItem;
+
+        if (!transformTemplate.trim()) {
+          results.push(currentItem);
+        } else if (transformTemplate.includes("{{")) {
+          results.push(interpolate(transformTemplate, state, globalsList, secretsList));
+        } else if (transformTemplate.startsWith(`${itemVar}.`)) {
+          const subProp = transformTemplate.slice(itemVar.length + 1);
+          if (currentItem && typeof currentItem === "object") {
+            results.push(getPath(currentItem as Record<string, unknown>, subProp));
+          } else {
+            results.push(undefined);
+          }
+        } else {
+          results.push(interpolate(transformTemplate, state, globalsList, secretsList));
+        }
+      }
+
+      state[outputKey] = results;
+      return { count: results.length, output_key: outputKey, results };
     }
     case "sink": {
       return {
