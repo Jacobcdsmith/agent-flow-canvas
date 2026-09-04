@@ -432,6 +432,29 @@ export function generatePython(
           `# ${c.content ? c.content.replace(/\n/g, "\n# ") : "(empty note)"}`,
           `return "next"`,
         ].join("\n");
+      case "transform":
+        return [
+          `op = ${pyStr(c.op || "json_map")}`,
+          `spec = interpolate(${pyStr(c.spec || "")}, state)`,
+          `transformed = {"op": op, "spec": spec, "source": state.last}`,
+          `state.set(${pyStr(c.output_key || "transformed")}, transformed)`,
+          `state.last = transformed`,
+          `return "next"`,
+        ].join("\n");
+      case "loop":
+        return [
+          `items_path = ${pyStr(c.items_path || "items")}`,
+          `raw_items = state.get(items_path, [])`,
+          `items = raw_items if isinstance(raw_items, list) else [raw_items]`,
+          `results = []`,
+          `for idx, item in enumerate(items[:${c.max_iterations || "50"}]):`,
+          `    state.set(${pyStr(c.item_var || "item")}, item)`,
+          `    state.set(${pyStr(c.index_var || "index")}, idx)`,
+          `    results.append({"index": idx, "item": item})`,
+          `state.set(${pyStr(c.output_key || "loop_results")}, results)`,
+          `state.last = results`,
+          `return "next"`,
+        ].join("\n");
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -626,6 +649,30 @@ export function generateJavaScript(
           `// ${c.content ? c.content.replace(/\n/g, "\n// ") : "(empty note)"}`,
           `return "next";`,
         ].join("\n");
+      case "transform":
+        return [
+          `const op = ${JSON.stringify(c.op || "json_map")};`,
+          `const spec = interpolate(${JSON.stringify(c.spec || "")}, state);`,
+          `const transformed = { op, spec, source: state.last };`,
+          `state.set(${JSON.stringify(c.output_key || "transformed")}, transformed);`,
+          `state.last = transformed;`,
+          `return "next";`,
+        ].join("\n");
+      case "loop":
+        return [
+          `const itemsPath = ${JSON.stringify(c.items_path || "items")};`,
+          `const rawItems = state.get(itemsPath) ?? [];`,
+          `const items = Array.isArray(rawItems) ? rawItems : [rawItems];`,
+          `const results = [];`,
+          `for (let idx = 0; idx < Math.min(items.length, ${c.max_iterations || "50"}); idx++) {`,
+          `  state.set(${JSON.stringify(c.item_var || "item")}, items[idx]);`,
+          `  state.set(${JSON.stringify(c.index_var || "index")}, idx);`,
+          `  results.push({ index: idx, item: items[idx] });`,
+          `}`,
+          `state.set(${JSON.stringify(c.output_key || "loop_results")}, results);`,
+          `state.last = results;`,
+          `return "next";`,
+        ].join("\n");
       default:
         return `return "next";`;
     }
@@ -677,4 +724,4 @@ export function generateCode(
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note","transform","loop"];

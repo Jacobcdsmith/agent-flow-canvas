@@ -9,7 +9,9 @@ export type AgentNodeKind =
   | "sink"
   | "http"
   | "script"
-  | "note";
+  | "note"
+  | "transform"
+  | "loop";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -149,6 +151,31 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     configFields: [
       { key: "content", label: "content", placeholder: "Write documentation note here...", type: "textarea" },
       { key: "color", label: "color", placeholder: "yellow", type: "select", options: ["yellow", "blue", "green", "pink", "purple"] },
+    ],
+  },
+  {
+    kind: "transform",
+    label: "Data Transform",
+    description: "Transforms state data (json_map, pick_fields, template_string, set_keys, flatten_object).",
+    defaultName: "transform_data",
+    configFields: [
+      { key: "op", label: "op", placeholder: "json_map", type: "select", options: ["json_map", "pick_fields", "template_string", "set_keys", "flatten_object"] },
+      { key: "input_key", label: "input_key", placeholder: "last_output" },
+      { key: "output_key", label: "output_key", placeholder: "transformed" },
+      { key: "spec", label: "spec", placeholder: '{"new_field": "{{state.query}}"} or field1,field2', type: "textarea" },
+    ],
+  },
+  {
+    kind: "loop",
+    label: "Array Loop",
+    description: "Iterates over an array in state, binding item variables and evaluating results.",
+    defaultName: "array_loop",
+    configFields: [
+      { key: "items_path", label: "items_path", placeholder: "items" },
+      { key: "item_var", label: "item_var", placeholder: "item" },
+      { key: "index_var", label: "index_var", placeholder: "index" },
+      { key: "output_key", label: "output_key", placeholder: "loop_results" },
+      { key: "max_iterations", label: "max_iterations", placeholder: "50" },
     ],
   },
 ];
