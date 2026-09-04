@@ -66,6 +66,10 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import { WorkspaceManager } from "@/flow/WorkspaceManager";
+import { WorkflowAnalyticsModal } from "@/flow/WorkflowAnalyticsModal";
+import { RunComparisonModal } from "@/flow/RunComparisonModal";
+import { saveRunRecord } from "@/flow/runHistory";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -344,6 +348,9 @@ function Canvas() {
   const [globals, setGlobals] = useState<GlobalVar[]>(() => loadGlobals());
   const [secrets, setSecrets] = useState<SecretVar[]>(() => loadSecrets());
   const [showGlobals, setShowGlobals] = useState(false);
+  const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
 
   useEffect(() => {
     saveGlobals(globals);
@@ -1368,6 +1375,7 @@ function Canvas() {
         },
       });
       setRunLogs(logs);
+      saveRunRecord(activeWorkflowId, logs, parsedState);
       const errored = logs.some((l) => l.error);
       if (errored) toast.error(`Flow ran with errors (${logs.length} steps)`);
       else toast.success(`Flow ran in ${logs.length} steps`);
@@ -1560,6 +1568,30 @@ function Canvas() {
           >
             <span className="hidden sm:inline">⚙ globals · {globals.length + secrets.length}</span>
             <span className="sm:hidden">⚙g · {globals.length + secrets.length}</span>
+          </button>
+          <button
+            onClick={() => setShowWorkspaceModal(true)}
+            title="Backup and restore full workspace bundle (workflows, presets, variables, gateways)"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            <span className="hidden sm:inline">💼 workspace</span>
+            <span className="sm:hidden">💼</span>
+          </button>
+          {runLogs && runLogs.length > 0 && (
+            <button
+              onClick={() => setShowAnalyticsModal(true)}
+              title="Open Workflow Performance Profiler & Latency Analytics"
+              className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors text-amber-700 dark:text-amber-400 font-semibold"
+            >
+              📊 analytics
+            </button>
+          )}
+          <button
+            onClick={() => setShowComparisonModal(true)}
+            title="Compare workflow execution runs side-by-side"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
+          >
+            ⚖ compare
           </button>
           <button
             onClick={() => setShowSample(true)}
@@ -2471,6 +2503,33 @@ function Canvas() {
             setSelectedId(id);
             setSelectedEdgeId(null);
           }}
+        />
+      )}
+
+      {showWorkspaceModal && (
+        <WorkspaceManager
+          onClose={() => setShowWorkspaceModal(false)}
+          onWorkspaceImported={() => {
+            setWorkflows(loadWorkflows());
+            setGlobals(loadGlobals());
+            setSecrets(loadSecrets());
+            setGateways(loadGateways());
+          }}
+        />
+      )}
+
+      {showAnalyticsModal && runLogs && (
+        <WorkflowAnalyticsModal
+          runLogs={runLogs}
+          onClose={() => setShowAnalyticsModal(false)}
+        />
+      )}
+
+      {showComparisonModal && (
+        <RunComparisonModal
+          workflowId={activeWorkflowId}
+          currentLogs={runLogs}
+          onClose={() => setShowComparisonModal(false)}
         />
       )}
     </div>

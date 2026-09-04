@@ -478,6 +478,125 @@ export async function runNode(
         annotationOnly: true,
       };
     }
+    case "transform": {
+      const op = (cfg.op || "json_map").toLowerCase();
+      const inputKey = (cfg.input_key || "").trim();
+      const outputKey = (cfg.output_key || "transformed").trim();
+      const spec = cfg.spec || "";
+
+      let inputVal: unknown = state.last_output;
+      if (inputKey) {
+        const fromPath = getPath(state, inputKey);
+        if (fromPath !== undefined) inputVal = fromPath;
+        else if (inputKey in state) inputVal = state[inputKey];
+      }
+
+      let result: unknown;
+      if (op === "pick_fields") {
+        let fields: string[] = [];
+        if (spec.trim().startsWith("[")) {
+          try { fields = JSON.parse(spec); } catch { fields = spec.split(",").map((s) => s.trim()); }
+        } else {
+          fields = spec.split(",").map((s) => s.trim()).filter(Boolean);
+        }
+        const srcObj = (inputVal && typeof inputVal === "object" && fields.some((f) => f in (inputVal as object)) ? inputVal : state) as Record<string, unknown>;
+        const picked: Record<string, unknown> = {};
+        fields.forEach((f) => {
+          if (f in srcObj) picked[f] = srcObj[f];
+          else {
+            const v = getPath(srcObj, f);
+            if (v !== undefined) picked[f] = v;
+          }
+        });
+        result = picked;
+      } else if (op === "template_string") {
+        result = interpolate(spec, state, globalsList, secretsList);
+      } else if (op === "set_keys") {
+        let keysObj: Record<string, unknown> = {};
+        if (spec.trim().startsWith("{")) {
+          try {
+            const interpolatedSpec = interpolate(spec, state, globalsList, secretsList);
+            keysObj = JSON.parse(interpolatedSpec);
+          } catch {
+            keysObj = { spec: interpolate(spec, state, globalsList, secretsList) };
+          }
+        } else {
+          spec.split("\n").forEach((line) => {
+            const idx = line.indexOf("=");
+            if (idx > 0) {
+              const k = line.slice(0, idx).trim();
+              const v = line.slice(idx + 1).trim();
+              keysObj[k] = interpolate(v, state, globalsList, secretsList);
+            }
+          });
+        }
+        Object.assign(state, keysObj);
+        result = keysObj;
+      } else if (op === "flatten_object") {
+        const flatten = (obj: Record<string, unknown>, prefix = ""): Record<string, unknown> => {
+          return Object.keys(obj).reduce((acc: Record<string, unknown>, k: string) => {
+            const pre = prefix ? `${prefix}.${k}` : k;
+            if (obj[k] && typeof obj[k] === "object" && !Array.isArray(obj[k])) {
+              Object.assign(acc, flatten(obj[k] as Record<string, unknown>, pre));
+            } else {
+              acc[pre] = obj[k];
+            }
+            return acc;
+          }, {});
+        };
+        const srcObj = (inputVal && typeof inputVal === "object" ? inputVal : state) as Record<string, unknown>;
+        result = flatten(srcObj);
+      } else {
+        // Default json_map
+        const interpolatedSpec = interpolate(spec || "{}", state, globalsList, secretsList);
+        try {
+          result = JSON.parse(interpolatedSpec);
+        } catch {
+          result = { raw: interpolatedSpec, source: inputVal };
+        }
+      }
+
+      if (outputKey) {
+        state[outputKey] = result;
+      }
+      return result;
+    }
+    case "loop": {
+      const itemsPath = (cfg.items_path || "items").trim();
+      const itemVar = (cfg.item_var || "item").trim();
+      const indexVar = (cfg.index_var || "index").trim();
+      const outputKey = (cfg.output_key || "loop_results").trim();
+      const maxIter = Math.min(Math.max(1, parseInt(cfg.max_iterations || "50", 10) || 50), 500);
+
+      let rawItems: unknown = getPath(state, itemsPath);
+      if (rawItems === undefined && itemsPath in state) {
+        rawItems = state[itemsPath];
+      }
+      if (typeof rawItems === "string") {
+        try { rawItems = JSON.parse(rawItems); } catch { rawItems = [rawItems]; }
+      }
+
+      const itemsArr = Array.isArray(rawItems) ? rawItems : rawItems != null ? [rawItems] : [];
+      const iterations = Math.min(itemsArr.length, maxIter);
+      const results: unknown[] = [];
+
+      for (let i = 0; i < iterations; i++) {
+        const item = itemsArr[i];
+        state[itemVar] = item;
+        state[indexVar] = i;
+        results.push({ index: i, item });
+      }
+
+      if (outputKey) {
+        state[outputKey] = results;
+      }
+
+      return {
+        itemCount: itemsArr.length,
+        iterationsProcessed: iterations,
+        results,
+      };
+    }
     default:
       return { kind: node.data.kind, note: "no executor" };
   }
