@@ -432,6 +432,64 @@ export function generatePython(
           `# ${c.content ? c.content.replace(/\n/g, "\n# ") : "(empty note)"}`,
           `return "next"`,
         ].join("\n");
+      case "transform": {
+        const op = c.operation || "json_map";
+        const target = c.target_key || "transformed";
+        const inputKey = c.input_key || "";
+        const expr = c.expression || "";
+        return [
+          `# Data Transform op=${pyStr(op)} target=${pyStr(target)}`,
+          `input_val = state.get(${pyStr(inputKey || "last")}, state.last)`,
+          `expr_val = interpolate(${pyStr(expr)}, state)`,
+          `if ${pyStr(op)} == "template_string":`,
+          `    res = expr_val`,
+          `elif ${pyStr(op)} == "pick_fields":`,
+          `    fields = [f.strip() for f in expr_val.replace("\\n", ",").split(",") if f.strip()]`,
+          `    res = {f: input_val.get(f) for f in fields if isinstance(input_val, dict) and f in input_val}`,
+          `elif ${pyStr(op)} == "flatten_object":`,
+          `    def _flatten(o, prefix=""):`,
+          `        acc = {}`,
+          `        for k, v in o.items():`,
+          `            pre = f"{prefix}.{k}" if prefix else k`,
+          `            if isinstance(v, dict): acc.update(_flatten(v, pre))`,
+          `            else: acc[pre] = v`,
+          `        return acc`,
+          `    res = _flatten(input_val) if isinstance(input_val, dict) else input_val`,
+          `else:`,
+          `    try:`,
+          `        res = json.loads(expr_val) if expr_val.strip() else input_val`,
+          `    except Exception:`,
+          `        res = expr_val`,
+          `state.set(${pyStr(target)}, res)`,
+          `state.last = res`,
+          `return "next"`,
+        ].join("\n");
+      }
+      case "loop": {
+        const arrKey = c.array_key || "items";
+        const itemVar = c.item_var || "item";
+        const targetKey = c.target_key || "processed";
+        const tmpl = c.transform_template || "";
+        const maxIter = parseInt(c.max_iterations || "100", 10) || 100;
+        return [
+          `# Array Loop over state.${arrKey}`,
+          `raw_arr = state.get(${pyStr(arrKey)}, [])`,
+          `arr = raw_arr if isinstance(raw_arr, list) else ([raw_arr] if raw_arr is not None else [])`,
+          `res_list = []`,
+          `for idx, item in enumerate(arr[:${maxIter}]):`,
+          `    state.set(${pyStr(itemVar)}, item)`,
+          `    tmpl_val = interpolate(${pyStr(tmpl)}, state)`,
+          `    if tmpl_val.strip():`,
+          `        try: val = json.loads(tmpl_val)`,
+          `        except Exception: val = tmpl_val`,
+          `    else:`,
+          `        val = item`,
+          `    res_list.append(val)`,
+          `state.set(${pyStr(targetKey)}, res_list)`,
+          `state.last = res_list`,
+          `return "next"`,
+        ].join("\n");
+      }
       default: {
         const _exhaustive: never = d.kind as never;
         return `return "next"  # unknown kind ${_exhaustive}`;
@@ -626,6 +684,55 @@ export function generateJavaScript(
           `// ${c.content ? c.content.replace(/\n/g, "\n// ") : "(empty note)"}`,
           `return "next";`,
         ].join("\n");
+      case "transform": {
+        const op = c.operation || "json_map";
+        const target = c.target_key || "transformed";
+        const inputKey = c.input_key || "";
+        const expr = c.expression || "";
+        return [
+          `const op = ${JSON.stringify(op)};`,
+          `const inputVal = state.get(${JSON.stringify(inputKey || "last")}) ?? state.last;`,
+          `const exprVal = interpolate(${JSON.stringify(expr)}, state);`,
+          `let res;`,
+          `if (op === "template_string") { res = exprVal; }`,
+          `else if (op === "pick_fields") {`,
+          `  const fields = exprVal.split(/[\\n,]+/).map(f => f.trim()).filter(Boolean);`,
+          `  res = {};`,
+          `  if (typeof inputVal === "object" && inputVal !== null) {`,
+          `    for (const f of fields) { if (f in inputVal) res[f] = inputVal[f]; }`,
+          `  }`,
+          `} else {`,
+          `  try { res = JSON.parse(exprVal); } catch { res = exprVal; }`,
+          `}`,
+          `state.set(${JSON.stringify(target)}, res);`,
+          `state.last = res;`,
+          `return "next";`,
+        ].join("\n");
+      }
+      case "loop": {
+        const arrKey = c.array_key || "items";
+        const itemVar = c.item_var || "item";
+        const targetKey = c.target_key || "processed";
+        const tmpl = c.transform_template || "";
+        const maxIter = parseInt(c.max_iterations || "100", 10) || 100;
+        return [
+          `const rawArr = state.get(${JSON.stringify(arrKey)}) ?? [];`,
+          `const arr = Array.isArray(rawArr) ? rawArr : (rawArr ? [rawArr] : []);`,
+          `const resList = [];`,
+          `for (const item of arr.slice(0, ${maxIter})) {`,
+          `  state.set(${JSON.stringify(itemVar)}, item);`,
+          `  const tmplVal = interpolate(${JSON.stringify(tmpl)}, state);`,
+          `  let val = item;`,
+          `  if (tmplVal.trim()) {`,
+          `    try { val = JSON.parse(tmplVal); } catch { val = tmplVal; }`,
+          `  }`,
+          `  resList.push(val);`,
+          `}`,
+          `state.set(${JSON.stringify(targetKey)}, resList);`,
+          `state.last = resList;`,
+          `return "next";`,
+        ].join("\n");
+      }
       default:
         return `return "next";`;
     }
@@ -677,4 +784,4 @@ export function generateCode(
 }
 
 // also export the kind set for sanity
-export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note"];
+export const ALL_KINDS: AgentNodeKind[] = ["trigger","llm","tool","router","subagent","memory","human","sink","http","script","note","transform","loop"];

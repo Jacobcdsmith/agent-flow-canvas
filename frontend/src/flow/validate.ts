@@ -3,7 +3,7 @@ import { AgentNodeData } from "./types";
 
 export interface ValidationIssue {
   nodeId?: string;
-  kind: "no-trigger" | "orphan" | "router-missing-branch";
+  kind: "no-trigger" | "orphan" | "router-missing-branch" | "transform-missing-key" | "loop-missing-key";
   message: string;
 }
 
@@ -46,6 +46,24 @@ export function validateGraph(
           nodeId: n.id,
           kind: "router-missing-branch",
           message: `Router "${n.data.name}" is missing ${!labels.has("true") ? "true" : ""}${!labels.has("true") && !labels.has("false") ? " & " : ""}${!labels.has("false") ? "false" : ""} branch`,
+        });
+      }
+    }
+    if (n.data.kind === "transform") {
+      if (!n.data.config?.target_key?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "transform-missing-key",
+          message: `Data Transform "${n.data.name}" requires a target_key`,
+        });
+      }
+    }
+    if (n.data.kind === "loop") {
+      if (!n.data.config?.array_key?.trim() || !n.data.config?.target_key?.trim()) {
+        issues.push({
+          nodeId: n.id,
+          kind: "loop-missing-key",
+          message: `Array Loop "${n.data.name}" requires array_key and target_key`,
         });
       }
     }
