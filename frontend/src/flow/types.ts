@@ -9,7 +9,9 @@ export type AgentNodeKind =
   | "sink"
   | "http"
   | "script"
-  | "note";
+  | "note"
+  | "transform"
+  | "loop";
 
 export interface AgentNodeData {
   kind: AgentNodeKind;
@@ -149,6 +151,37 @@ export const NODE_TYPES: NodeTypeMeta[] = [
     configFields: [
       { key: "content", label: "content", placeholder: "Write documentation note here...", type: "textarea" },
       { key: "color", label: "color", placeholder: "yellow", type: "select", options: ["yellow", "blue", "green", "pink", "purple"] },
+    ],
+  },
+  {
+    kind: "transform",
+    label: "Data Transform",
+    description: "Transforms state variables (json_map, pick_fields, template_string, set_keys, flatten_object).",
+    defaultName: "transform_data",
+    configFields: [
+      {
+        key: "operation",
+        label: "operation",
+        placeholder: "json_map | pick_fields | template_string | set_keys | flatten_object",
+        type: "select",
+        options: ["json_map", "pick_fields", "template_string", "set_keys", "flatten_object"],
+      },
+      { key: "input_key", label: "input_key", placeholder: "state.items or last_output" },
+      { key: "target_key", label: "target_key", placeholder: "transformed_result" },
+      { key: "expression", label: "expression", placeholder: '{"key": "{{state.val}}"} or "id, name"', type: "textarea" },
+    ],
+  },
+  {
+    kind: "loop",
+    label: "Array Loop",
+    description: "Iterates over an array in state, evaluating transform templates per item.",
+    defaultName: "loop_array",
+    configFields: [
+      { key: "array_key", label: "array_key", placeholder: "state.items" },
+      { key: "item_var", label: "item_var", placeholder: "item" },
+      { key: "target_key", label: "target_key", placeholder: "processed_list" },
+      { key: "transform_template", label: "transform_template", placeholder: '{"item": "{{item}}", "status": "processed"}', type: "textarea" },
+      { key: "max_iterations", label: "max_iterations", placeholder: "100" },
     ],
   },
 ];

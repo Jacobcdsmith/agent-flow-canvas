@@ -17,6 +17,8 @@ const KIND_COLOR: Record<string, string> = {
   http: "hsl(var(--node-http))",
   script: "hsl(var(--node-script))",
   note: "hsl(45 90% 48%)",
+  transform: "hsl(var(--node-transform, 280 75% 55%))",
+  loop: "hsl(var(--node-loop, 160 70% 40%))",
 };
 
 export function Palette({ onAdd }: Props) {

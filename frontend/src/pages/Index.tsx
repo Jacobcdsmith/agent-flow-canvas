@@ -66,6 +66,7 @@ import {
   cryptoId as presetCryptoId,
 } from "@/flow/statePresets";
 import { CommandPalette } from "@/flow/CommandPalette";
+import { WorkflowAnalyticsModal } from "@/flow/WorkflowAnalyticsModal";
 
 const nodeTypes = { agent: AgentNode, note: NoteNode };
 
@@ -199,6 +200,7 @@ function Canvas() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(() => loadActiveWorkflowId());
   const [showWorkflows, setShowWorkflows] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   // Initialize nodes and edges based on active workflow id
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => {
@@ -1570,6 +1572,13 @@ function Canvas() {
             <span className="sm:hidden">▤</span>
           </button>
           <button
+            onClick={() => setShowAnalytics(true)}
+            title="Open Workflow Performance Profiler & Analytics"
+            className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors flex items-center gap-1"
+          >
+            📊 <span className="hidden sm:inline">analytics</span>
+          </button>
+          <button
             onClick={() => setShowIntro(true)}
             title="Open tutorial"
             className="font-mono text-[10px] sm:text-[11px] px-2 sm:px-3 py-1 border border-dashed border-[hsl(var(--ink))] hover:bg-[hsl(var(--ink))] hover:text-[hsl(var(--paper))] transition-colors"
@@ -2473,6 +2482,14 @@ function Canvas() {
           }}
         />
       )}
+
+      <WorkflowAnalyticsModal
+        isOpen={showAnalytics}
+        onClose={() => setShowAnalytics(false)}
+        runLogs={runLogs}
+        nodes={nodes}
+        edges={edges}
+      />
     </div>
   );
 }

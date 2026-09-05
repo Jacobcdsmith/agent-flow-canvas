@@ -77,7 +77,12 @@ export function interpolate(
       const v = getPath(state, String(k));
       return v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v);
     })
-    .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""));
+    .replace(/\{\{?\s*query\s*\}?\}/g, () => String(state.query ?? ""))
+    .replace(/\{\{?\s*([\w.]+)\s*\}?\}/g, (_m, k) => {
+      const key = String(k);
+      const v = getPath(state, key);
+      return v === undefined ? _m : typeof v === "string" ? v : JSON.stringify(v);
+    });
 }
 
 /**
@@ -476,6 +481,153 @@ export async function runNode(
         note: cfg.content || "Sticky Note",
         color: cfg.color || "yellow",
         annotationOnly: true,
+      };
+    }
+    case "transform": {
+      const op = (cfg.operation || "json_map").toLowerCase();
+      const inputKey = (cfg.input_key || "").trim();
+      const targetKey = (cfg.target_key || "transformed").trim();
+      const expr = cfg.expression || "";
+
+      let rawInput: unknown = state;
+      if (inputKey) {
+        if (inputKey.startsWith("state.")) {
+          rawInput = getPath(state, inputKey.slice(6));
+        } else if (inputKey in state) {
+          rawInput = state[inputKey];
+        } else if (inputKey === "last_output") {
+          rawInput = state.last_output;
+        } else {
+          rawInput = getPath(state, inputKey);
+        }
+      } else if (state.last_output !== undefined) {
+        rawInput = state.last_output;
+      }
+
+      let result: unknown;
+
+      if (op === "template_string") {
+        result = interpolate(expr, state, globalsList, secretsList);
+      } else if (op === "pick_fields") {
+        const fields = expr
+          .split(/[\n,]+/)
+          .map((f) => f.trim())
+          .filter(Boolean);
+        if (typeof rawInput === "object" && rawInput !== null) {
+          const picked: Record<string, unknown> = {};
+          for (const f of fields) {
+            const val = getPath(rawInput as Record<string, unknown>, f) ?? (rawInput as Record<string, unknown>)[f];
+            if (val !== undefined) picked[f] = val;
+          }
+          result = picked;
+        } else {
+          result = {};
+        }
+      } else if (op === "flatten_object") {
+        const flatten = (obj: Record<string, unknown>, prefix = ""): Record<string, unknown> => {
+          return Object.keys(obj).reduce((acc: Record<string, unknown>, k: string) => {
+            const pre = prefix ? `${prefix}.${k}` : k;
+            if (typeof obj[k] === "object" && obj[k] !== null && !Array.isArray(obj[k])) {
+              Object.assign(acc, flatten(obj[k] as Record<string, unknown>, pre));
+            } else {
+              acc[pre] = obj[k];
+            }
+            return acc;
+          }, {});
+        };
+        result = typeof rawInput === "object" && rawInput !== null && !Array.isArray(rawInput)
+          ? flatten(rawInput as Record<string, unknown>)
+          : rawInput;
+      } else if (op === "set_keys") {
+        let parsedKeys: Record<string, unknown> = {};
+        if (expr.trim()) {
+          const interpolated = interpolate(expr, state, globalsList, secretsList);
+          try {
+            parsedKeys = JSON.parse(interpolated);
+          } catch {
+            expr.split("\n").forEach((line) => {
+              const idx = line.indexOf("=");
+              if (idx > -1) {
+                const k = line.slice(0, idx).trim();
+                const v = line.slice(idx + 1).trim();
+                parsedKeys[k] = interpolate(v, state, globalsList, secretsList);
+              }
+            });
+          }
+        }
+        if (typeof rawInput === "object" && rawInput !== null && !Array.isArray(rawInput)) {
+          result = { ...rawInput, ...parsedKeys };
+        } else {
+          result = parsedKeys;
+        }
+      } else {
+        // default "json_map"
+        if (expr.trim()) {
+          const interpolated = interpolate(expr, state, globalsList, secretsList);
+          try {
+            result = JSON.parse(interpolated);
+          } catch {
+            result = interpolated;
+          }
+        } else {
+          result = rawInput;
+        }
+      }
+
+      state[targetKey] = result;
+      return { operation: op, targetKey, result };
+    }
+    case "loop": {
+      const arrayKey = (cfg.array_key || "items").trim();
+      const itemVar = (cfg.item_var || "item").trim();
+      const targetKey = (cfg.target_key || "processed").trim();
+      const template = cfg.transform_template || "";
+      const maxIter = parseInt(cfg.max_iterations || "100", 10) || 100;
+
+      let arr: unknown[];
+      let rawVal: unknown;
+      if (arrayKey.startsWith("state.")) {
+        rawVal = getPath(state, arrayKey.slice(6));
+      } else if (arrayKey in state) {
+        rawVal = state[arrayKey];
+      } else {
+        rawVal = getPath(state, arrayKey);
+      }
+
+      if (Array.isArray(rawVal)) {
+        arr = rawVal;
+      } else if (rawVal !== undefined && rawVal !== null) {
+        arr = [rawVal];
+      } else {
+        arr = [];
+      }
+
+      const boundedArr = arr.slice(0, maxIter);
+      const results: unknown[] = [];
+
+      for (const item of boundedArr) {
+        const itemCtx = {
+          ...state,
+          [itemVar]: item,
+          item: item,
+        };
+        if (template.trim()) {
+          const interpolated = interpolate(template, itemCtx, globalsList, secretsList);
+          try {
+            results.push(JSON.parse(interpolated));
+          } catch {
+            results.push(interpolated);
+          }
+        } else {
+          results.push(item);
+        }
+      }
+
+      state[targetKey] = results;
+      return {
+        total: boundedArr.length,
+        items: results,
+        target_key: targetKey,
       };
     }
     default:
